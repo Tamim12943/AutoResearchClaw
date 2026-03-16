@@ -671,6 +671,25 @@ def check_class_quality(all_files: dict[str, str]) -> list[str]:
                     # (new methods that parent doesn't have)
                     pass
 
+                # --- Check 6: Ablation subclass must override >=1 parent method ---
+                _lname = cls_name.lower()
+                if ("ablation" in _lname or "no_" in _lname or "without" in _lname):
+                    parent_non_dunder = {
+                        m.name
+                        for m in parent_node.body
+                        if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and not m.name.startswith("__")
+                    }
+                    child_overrides = set(child_methods.keys()) & parent_non_dunder
+                    if not child_overrides and parent_non_dunder:
+                        warnings.append(
+                            f"[{fname_code}] Ablation class '{cls_name}' inherits "
+                            f"from '{base_name}' but does NOT override any of its "
+                            f"methods ({', '.join(sorted(parent_non_dunder))}). "
+                            f"An ablation MUST override the method that removes "
+                            f"the ablated component."
+                        )
+
     return warnings
 
 
@@ -750,6 +769,85 @@ def _extract_assign_targets(node: ast.AST) -> list[str]:
         if isinstance(node.target, ast.Name):
             names.append(node.target.id)
     return names
+
+
+def auto_fix_unbound_locals(code: str) -> tuple[str, int]:
+    """Programmatically fix UnboundLocalError patterns.
+
+    For each variable assigned only inside an if-branch but used later,
+    insert ``var = None`` before the if-statement.
+
+    Returns (fixed_code, num_fixes).
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code, 0
+
+    lines = code.splitlines(keepends=True)
+    insertions: dict[int, list[str]] = {}  # lineno -> lines to insert before
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+
+        if_only_vars: dict[str, int] = {}
+        top_level_vars: set[str] = set()
+        if_line_map: dict[str, int] = {}  # var -> if-statement lineno
+
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.If):
+                before: dict[str, int] = {}
+                _collect_if_only_assignments(child, before)
+                for var_name, var_line in before.items():
+                    if_only_vars[var_name] = var_line
+                    if_line_map[var_name] = child.lineno
+            elif isinstance(child, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                for target in _extract_assign_targets(child):
+                    top_level_vars.add(target)
+
+        for var_name, var_line in if_only_vars.items():
+            if var_name in top_level_vars:
+                continue
+            # Confirm it's actually used later
+            used_later = False
+            for later_node in ast.walk(node):
+                if (
+                    isinstance(later_node, ast.Name)
+                    and later_node.id == var_name
+                    and isinstance(later_node.ctx, ast.Load)
+                    and later_node.lineno > var_line
+                ):
+                    used_later = True
+                    break
+            if not used_later:
+                continue
+
+            if_lineno = if_line_map.get(var_name)
+            if if_lineno is None:
+                continue
+            # Determine indentation of the if-statement
+            if if_lineno <= len(lines):
+                if_line = lines[if_lineno - 1]
+                indent = if_line[: len(if_line) - len(if_line.lstrip())]
+            else:
+                indent = "    "
+            insertions.setdefault(if_lineno, [])
+            fix_line = f"{indent}{var_name} = None\n"
+            if fix_line not in insertions[if_lineno]:
+                insertions[if_lineno].append(fix_line)
+
+    if not insertions:
+        return code, 0
+
+    # Apply insertions in reverse line order to keep line numbers stable
+    num_fixes = sum(len(v) for v in insertions.values())
+    for lineno in sorted(insertions, reverse=True):
+        idx = lineno - 1
+        for fix_line in reversed(insertions[lineno]):
+            lines.insert(idx, fix_line)
+
+    return "".join(lines), num_fixes
 
 
 def check_api_correctness(code: str, fname: str = "main.py") -> list[str]:

@@ -361,19 +361,19 @@ domains:
         size_mb: 0
         metrics: [episode_reward, steps_to_solve]
         api: "gymnasium.make('Acrobot-v1')"
-      - name: HalfCheetah-v4
+      - name: HalfCheetah-v5
         tier: 2
         domain: mujoco
         size_mb: 50
         metrics: [average_return, episode_reward]
-        api: "gymnasium.make('HalfCheetah-v4')"
+        api: "gymnasium.make('HalfCheetah-v5')"
         pip: ["gymnasium[mujoco]"]
-      - name: Hopper-v4
+      - name: Hopper-v5
         tier: 2
         domain: mujoco
         size_mb: 50
         metrics: [average_return]
-        api: "gymnasium.make('Hopper-v4')"
+        api: "gymnasium.make('Hopper-v5')"
         pip: ["gymnasium[mujoco]"]
     common_baselines:
       - name: PPO

@@ -2160,6 +2160,7 @@ def _execute_experiment_design(
             preamble=preamble,
             hypotheses=hypotheses,
             dataset_guidance=_dg_block,
+            time_budget_sec=config.experiment.time_budget_sec,
         )
         resp = _chat_with_prompt(
             llm,
@@ -2284,9 +2285,15 @@ def _execute_experiment_design(
                 plan["datasets"] = [
                     b["name"] for b in _benchmark_plan.selected_benchmarks
                 ]
+                # Normalize existing baselines to list (LLM may emit dict)
+                _baselines_from_plan = plan.get("baselines", [])
+                if isinstance(_baselines_from_plan, dict):
+                    _baselines_from_plan = list(_baselines_from_plan.keys())
+                elif not isinstance(_baselines_from_plan, list):
+                    _baselines_from_plan = []
                 plan["baselines"] = [
                     bl["name"] for bl in _benchmark_plan.selected_baselines
-                ] + plan.get("baselines", [])
+                ] + _baselines_from_plan
                 # Deduplicate baselines
                 plan["baselines"] = list(dict.fromkeys(plan["baselines"]))
 
@@ -2756,9 +2763,28 @@ def _execute_code_generation(
 
     # --- R10-Fix6: Code complexity and quality check ---
     from researchclaw.experiment.validator import (
+        auto_fix_unbound_locals,
         check_code_complexity,
         deep_validate_files,
     )
+
+    # --- BUG-3 fix: Programmatic auto-fix for UnboundLocalError patterns ---
+    _total_ub_fixes = 0
+    for fname, code in list(files.items()):
+        if fname.endswith(".py"):
+            fixed_code, n_fixes = auto_fix_unbound_locals(code)
+            if n_fixes > 0:
+                files[fname] = fixed_code
+                (exp_dir / fname).write_text(fixed_code, encoding="utf-8")
+                _total_ub_fixes += n_fixes
+                logger.info(
+                    "Stage 10: auto-fixed %d UnboundLocalError risk(s) in %s",
+                    n_fixes, fname,
+                )
+    if _total_ub_fixes:
+        logger.info(
+            "Stage 10: auto-fixed %d total UnboundLocalError risks", _total_ub_fixes
+        )
 
     complexity_warnings: list[str] = []
     for fname, code in files.items():
@@ -2777,7 +2803,7 @@ def _execute_code_generation(
     # --- P1.2: If critical deep issues found, attempt one repair cycle ---
     critical_deep = [w for w in deep_warnings if any(
         kw in w for kw in ("UnboundLocalError", "unregistered", "does not exist",
-                           "empty or trivial subclass")
+                           "empty or trivial subclass", "does NOT override")
     )]
     if critical_deep and llm is not None:
         logger.info(
@@ -2797,7 +2823,10 @@ def _execute_code_generation(
             f"- Variables used after if/else must be defined before the branch\n"
             f"- Use scipy.special.erf, not np.erf\n"
             f"- Ablation/variant classes must have genuinely different logic\n"
-            f"- Every class must have a real implementation, not just `pass`\n\n"
+            f"- Every class must have a real implementation, not just `pass`\n"
+            f"- Ablation classes MUST override the parent method that implements "
+            f"the component being ablated (e.g., if ablating attention, override "
+            f"the attention method with a simpler alternative like mean pooling)\n\n"
             f"Current code:\n{all_code_ctx}\n"
         )
         try:
@@ -2818,7 +2847,7 @@ def _execute_code_generation(
                     w for w in deep_warnings_after
                     if any(kw in w for kw in (
                         "UnboundLocalError", "unregistered", "does not exist",
-                        "empty or trivial subclass"
+                        "empty or trivial subclass", "does NOT override"
                     ))
                 ])
                 logger.info(
@@ -5542,13 +5571,15 @@ def _check_ablation_effectiveness(
     """
     warnings: list[str] = []
     cond_summaries = exp_summary.get("condition_summaries", {})
-    if not cond_summaries:
+    if not isinstance(cond_summaries, dict) or not cond_summaries:
         return warnings
 
     # Find baseline/control condition
     baseline_name = None
     baseline_mean = None
     for name, data in cond_summaries.items():
+        if not isinstance(data, dict):
+            continue
         name_lower = name.lower()
         if any(tag in name_lower for tag in ("baseline", "control", "vanilla", "standard")):
             metrics = data.get("metrics", {})
@@ -5574,6 +5605,8 @@ def _check_ablation_effectiveness(
 
     # Check each ablation condition
     for name, data in cond_summaries.items():
+        if not isinstance(data, dict):
+            continue
         name_lower = name.lower()
         if name == baseline_name:
             continue
@@ -5611,12 +5644,14 @@ def _detect_result_contradictions(
     """
     advisories: list[str] = []
     cond_summaries = exp_summary.get("condition_summaries", {})
-    if not cond_summaries:
+    if not isinstance(cond_summaries, dict) or not cond_summaries:
         return advisories
 
     # Collect primary metric means per condition
     means: dict[str, float] = {}
     for name, data in cond_summaries.items():
+        if not isinstance(data, dict):
+            continue
         metrics = data.get("metrics", {})
         for mk, mv in metrics.items():
             if mk.endswith("_mean"):
@@ -5756,10 +5791,12 @@ def _execute_paper_draft(
 
             # R19-6 + R33: Inject condition summaries with CIs
             cond_summaries = exp_summary_parsed.get("condition_summaries", {})
-            if cond_summaries:
+            if isinstance(cond_summaries, dict) and cond_summaries:
                 cond_block = "\n\n## PER-CONDITION SUMMARY (use in Results tables)\n"
                 for cname, cdata in sorted(cond_summaries.items()):
                     cond_block += f"\n### {cname}\n"
+                    if not isinstance(cdata, dict):
+                        continue
                     sr = cdata.get("success_rate")
                     if sr is not None:
                         cond_block += f"- Success rate: {sr:.1%}\n"
@@ -5782,6 +5819,8 @@ def _execute_paper_draft(
                 paired_block = "\n\n## PAIRED STATISTICAL COMPARISONS (use these in Results)\n"
                 paired_block += f"Total: {len(paired)} paired tests computed.\n"
                 for pc in paired:
+                    if not isinstance(pc, dict):
+                        continue
                     method = pc.get("method", "?")
                     baseline = pc.get("baseline", "?")
                     regime = pc.get("regime", "all")
@@ -5800,7 +5839,7 @@ def _execute_paper_draft(
                 exp_metrics_instruction += paired_block
 
             # R24: Method naming map — translate generic condition labels
-            _cond_names = list(cond_summaries.keys()) if cond_summaries else []
+            _cond_names = list(cond_summaries.keys()) if isinstance(cond_summaries, dict) and cond_summaries else []
             if _cond_names:
                 naming_block = (
                     "\n\n## METHOD NAMING (CRITICAL — do NOT use generic labels in the paper)\n"
