@@ -209,7 +209,44 @@ def _preprocess_markdown(md: str) -> str:
         out_lines.append("\\end{quote}")
     text = "\n".join(out_lines)
 
-    # 4. Normalize mid-line section headings (IMP-17)
+    # 4. T1.2: Remove stray markdown/latex/text fences that appear mid-document.
+    #    LLMs sometimes emit ```markdown or ```latex between sections.
+    #    Only remove documentation fences — preserve code fences (```python etc.)
+    _CODE_LANGS = frozenset({
+        "python", "java", "cpp", "c", "javascript", "typescript", "rust",
+        "go", "ruby", "bash", "sh", "sql", "r", "julia", "lua", "perl",
+        "scala", "kotlin", "swift", "haskell", "algorithm", "pseudocode",
+    })
+    _lines = text.split("\n")
+    _cleaned: list[str] = []
+    _in_code = False
+    for _l in _lines:
+        _stripped = _l.strip()
+        if _stripped.startswith("```") and not _in_code:
+            _lang = _stripped[3:].strip().lower()
+            if _lang in _CODE_LANGS or _lang.startswith("algorithm"):
+                # Real code block — keep
+                _in_code = True
+                _cleaned.append(_l)
+            elif _lang in ("markdown", "md", "latex", "tex", "text", "", "bibtex"):
+                # Documentation/wrapper fence — remove
+                pass
+            else:
+                # Unknown lang — keep to be safe
+                _in_code = True
+                _cleaned.append(_l)
+        elif _stripped == "```" and _in_code:
+            # Closing fence for a code block — keep
+            _in_code = False
+            _cleaned.append(_l)
+        elif _stripped == "```" and not _in_code:
+            # Stray fence — remove
+            pass
+        else:
+            _cleaned.append(_l)
+    text = "\n".join(_cleaned)
+
+    # 5. Normalize mid-line section headings (IMP-17)
     #    LLM output may concatenate sections onto single long lines:
     #      "...text ## Abstract Body text ## 1. Introduction More text..."
     #    Ensure each heading marker starts on its own line so _parse_sections
@@ -425,6 +462,18 @@ _TITLE_SKIP = {
     "acknowledgements",
 }
 
+# T1.1: Headings that are NOT valid paper titles (tables, figures, etc.)
+_TITLE_REJECT_RE = re.compile(
+    r"^(?:table|figure|fig\.|tab\.|algorithm|listing|appendix)\s",
+    re.IGNORECASE,
+)
+
+# T1.1: Headings that look like metric dumps rather than titles
+_METRIC_DUMP_RE = re.compile(
+    r"(?:primary_metric|accuracy|loss|f1_score|precision|recall)\b",
+    re.IGNORECASE,
+)
+
 
 def _extract_title(sections: list[_Section], raw_md: str) -> str:
     """Extract paper title from sections or raw markdown."""
@@ -435,20 +484,39 @@ def _extract_title(sections: list[_Section], raw_md: str) -> str:
             first_line = sec.body.split("\n")[0].strip()
             # Strip bold markers
             first_line = re.sub(r"\*\*(.+?)\*\*", r"\1", first_line)
-            if first_line:
+            if first_line and not _is_bad_title(first_line):
                 return first_line
 
-    # Fallback: first H1 heading that isn't a meta-heading
+    # Fallback: first H1/H2 heading that isn't a meta-heading or artefact
     for sec in sections:
-        if sec.level == 1 and sec.heading and sec.heading_lower not in _TITLE_SKIP:
+        if (
+            sec.level in (1, 2)
+            and sec.heading
+            and sec.heading_lower not in _TITLE_SKIP
+            and not _is_bad_title(sec.heading)
+        ):
             return sec.heading
 
-    # Last resort: first non-empty line
+    # Last resort: first non-empty line (still filtered)
     for line in raw_md.splitlines():
         stripped = line.strip().lstrip("#").strip()
-        if stripped:
+        if stripped and not _is_bad_title(stripped):
             return stripped
     return "Untitled Paper"
+
+
+def _is_bad_title(candidate: str) -> bool:
+    """Return True if *candidate* is clearly not a paper title."""
+    # Reject "Table 1 – ...", "Figure 2: ...", etc.
+    if _TITLE_REJECT_RE.match(candidate):
+        return True
+    # Reject raw metric key dumps
+    if _METRIC_DUMP_RE.search(candidate):
+        return True
+    # Reject if it contains raw underscore variable names (e.g. primary_metric)
+    if re.search(r"\w+_\w+/\w+", candidate):
+        return True
+    return False
 
 
 def _extract_abstract(sections: list[_Section]) -> str:
@@ -481,8 +549,8 @@ def _build_body(sections: list[_Section], *, title: str = "") -> str:
     """
     title_lower = title.strip().lower()
 
-    # Determine minimum heading level used for real sections (skip title/abstract).
-    # If the title was an H1 heading, sections starting at H2 should be promoted.
+    # Determine minimum heading level used for real body sections
+    # (skip title/abstract/references).
     title_h1_found = False
     for sec in sections:
         if (
@@ -493,8 +561,26 @@ def _build_body(sections: list[_Section], *, title: str = "") -> str:
             title_h1_found = True
             break
 
-    # When the title occupies the only H1, promote H2→\section, H3→\subsection, etc.
-    level_offset = 1 if title_h1_found else 0
+    # T1.3: Auto-detect when all body sections use H2 (##) instead of H1 (#).
+    # This happens when the LLM uses ## for main sections (Introduction, Method, etc.)
+    # without an explicit H1 title heading. We must promote H2→\section.
+    body_levels: set[int] = set()
+    for sec in sections:
+        if sec.heading_lower not in _SKIP_HEADINGS and sec.level >= 1:
+            if not (sec.level == 1 and sec.heading.strip().lower() == title_lower):
+                body_levels.add(sec.level)
+
+    min_body_level = min(body_levels) if body_levels else 1
+
+    # Promote if: (a) title was H1 and body starts at H2, OR
+    # (b) no title H1 found but all body sections are H2+ (LLM omitted H1 title)
+    if title_h1_found:
+        level_offset = 1
+    elif min_body_level >= 2:
+        # All body sections are H2 or deeper — promote so H2→\section
+        level_offset = min_body_level - 1
+    else:
+        level_offset = 0
 
     _level_map = {
         1: "section",
@@ -1125,6 +1211,55 @@ def check_paper_completeness(sections: list[_Section]) -> list[str]:
             f"Missing sections: {', '.join(sorted(missing))}. "
             f"Found: {', '.join(section_headings)}"
         )
+
+    # T2.5: Check for required conference sections (NeurIPS/ICLR mandate Limitations)
+    _required_extras = {"limitations"}
+    _extra_aliases = {
+        "limitation": "limitations",
+        "limitations and future work": "limitations",
+        "limitations and broader impact": "limitations",
+    }
+    found_extras: set[str] = set()
+    for sec in sections:
+        if sec.level in (1, 2) and sec.heading:
+            hl = sec.heading.strip().lower()
+            if hl in _required_extras:
+                found_extras.add(hl)
+            elif hl in _extra_aliases:
+                found_extras.add(_extra_aliases[hl])
+            elif "limitation" in hl:
+                found_extras.add("limitations")
+    missing_extras = _required_extras - found_extras
+    if missing_extras:
+        warnings.append(
+            f"Missing required sections for NeurIPS/ICLR: "
+            f"{', '.join(sorted(missing_extras))}."
+        )
+
+    # T1.5: Abstract length and quality checks
+    abstract_text = ""
+    for sec in sections:
+        if sec.heading_lower == "abstract":
+            abstract_text = sec.body
+            break
+    if abstract_text:
+        word_count = len(abstract_text.split())
+        if word_count > 300:
+            warnings.append(
+                f"Abstract is {word_count} words (conference limit: 150-250). "
+                f"Must be shortened."
+            )
+        elif word_count < 80:
+            warnings.append(
+                f"Abstract is only {word_count} words (expected ≥150)."
+            )
+        # Detect raw variable names / metric key dumps
+        raw_vars = re.findall(r"\b\w+_\w+/\w+(?:_\w+)*\s*=", abstract_text)
+        if raw_vars:
+            warnings.append(
+                f"Abstract contains raw variable names: {raw_vars[:3]}. "
+                f"Replace with human-readable descriptions."
+            )
 
     # Detect truncation markers
     all_body = " ".join(sec.body for sec in sections)

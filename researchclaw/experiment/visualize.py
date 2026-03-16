@@ -107,7 +107,7 @@ def plot_metric_trajectory(
     ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(_ensure_dir(output_path), dpi=150)
+    fig.savefig(_ensure_dir(output_path), dpi=300)
     plt.close(fig)
     logger.info("Saved metric trajectory: %s", output_path)
     return output_path
@@ -151,7 +151,7 @@ def plot_experiment_comparison(
     ax.set_xticklabels([_shorten_label(n) for n in names], rotation=30, ha="right")
     ax.grid(True, axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(_ensure_dir(output_path), dpi=150)
+    fig.savefig(_ensure_dir(output_path), dpi=300)
     plt.close(fig)
     logger.info("Saved experiment comparison: %s", output_path)
     return output_path
@@ -224,7 +224,7 @@ def plot_condition_comparison(
     ax.grid(True, axis="y", alpha=0.3)
     ax.set_axisbelow(True)
     fig.tight_layout()
-    fig.savefig(_ensure_dir(output_path), dpi=150, bbox_inches="tight")
+    fig.savefig(_ensure_dir(output_path), dpi=300, bbox_inches="tight")
     plt.close(fig)
     logger.info("Saved condition comparison: %s", output_path)
     return output_path
@@ -270,7 +270,7 @@ def plot_pipeline_timeline(
     ax.invert_yaxis()
     ax.grid(True, axis="x", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(_ensure_dir(output_path), dpi=150)
+    fig.savefig(_ensure_dir(output_path), dpi=300)
     plt.close(fig)
     logger.info("Saved pipeline timeline: %s", output_path)
     return output_path
@@ -314,7 +314,7 @@ def plot_iteration_scores(
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(_ensure_dir(output_path), dpi=150)
+    fig.savefig(_ensure_dir(output_path), dpi=300)
     plt.close(fig)
     logger.info("Saved iteration scores: %s", output_path)
     return output_path

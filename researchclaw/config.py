@@ -169,6 +169,48 @@ class DockerSandboxConfig:
 
 
 @dataclass(frozen=True)
+class CodeAgentConfig:
+    """Configuration for the advanced multi-phase code generation agent."""
+
+    enabled: bool = True
+    architecture_planning: bool = True
+    exec_fix_max_iterations: int = 3
+    exec_fix_timeout_sec: int = 60
+    tree_search_enabled: bool = False
+    tree_search_candidates: int = 3
+    tree_search_max_depth: int = 2
+    tree_search_eval_timeout_sec: int = 120
+    review_max_rounds: int = 2
+
+
+@dataclass(frozen=True)
+class BenchmarkAgentConfig:
+    """Configuration for the BenchmarkAgent multi-agent system."""
+
+    enabled: bool = True
+    enable_hf_search: bool = True
+    max_hf_results: int = 10
+    tier_limit: int = 2
+    min_benchmarks: int = 1
+    min_baselines: int = 2
+    prefer_cached: bool = True
+    max_iterations: int = 2
+
+
+@dataclass(frozen=True)
+class FigureAgentConfig:
+    """Configuration for the FigureAgent multi-agent system."""
+
+    enabled: bool = True
+    min_figures: int = 3
+    max_figures: int = 8
+    max_iterations: int = 3
+    render_timeout_sec: int = 30
+    strict_mode: bool = False
+    dpi: int = 300
+
+
+@dataclass(frozen=True)
 class ExperimentConfig:
     mode: str = "simulated"
     time_budget_sec: int = 300
@@ -179,6 +221,9 @@ class ExperimentConfig:
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     docker: DockerSandboxConfig = field(default_factory=DockerSandboxConfig)
     ssh_remote: SshRemoteConfig = field(default_factory=SshRemoteConfig)
+    code_agent: CodeAgentConfig = field(default_factory=CodeAgentConfig)
+    benchmark_agent: BenchmarkAgentConfig = field(default_factory=BenchmarkAgentConfig)
+    figure_agent: FigureAgentConfig = field(default_factory=FigureAgentConfig)
 
 
 @dataclass(frozen=True)
@@ -478,6 +523,58 @@ def _parse_experiment_config(data: dict[str, Any]) -> ExperimentConfig:
                 "remote_workdir", "/tmp/researchclaw_experiments"
             ),
         ),
+        code_agent=_parse_code_agent_config(data.get("code_agent") or {}),
+        benchmark_agent=_parse_benchmark_agent_config(
+            data.get("benchmark_agent") or {}
+        ),
+        figure_agent=_parse_figure_agent_config(data.get("figure_agent") or {}),
+    )
+
+
+def _parse_benchmark_agent_config(data: dict[str, Any]) -> BenchmarkAgentConfig:
+    if not data:
+        return BenchmarkAgentConfig()
+    return BenchmarkAgentConfig(
+        enabled=bool(data.get("enabled", True)),
+        enable_hf_search=bool(data.get("enable_hf_search", True)),
+        max_hf_results=int(data.get("max_hf_results", 10)),
+        tier_limit=int(data.get("tier_limit", 2)),
+        min_benchmarks=int(data.get("min_benchmarks", 1)),
+        min_baselines=int(data.get("min_baselines", 2)),
+        prefer_cached=bool(data.get("prefer_cached", True)),
+        max_iterations=int(data.get("max_iterations", 2)),
+    )
+
+
+def _parse_figure_agent_config(data: dict[str, Any]) -> FigureAgentConfig:
+    if not data:
+        return FigureAgentConfig()
+    return FigureAgentConfig(
+        enabled=bool(data.get("enabled", True)),
+        min_figures=int(data.get("min_figures", 3)),
+        max_figures=int(data.get("max_figures", 8)),
+        max_iterations=int(data.get("max_iterations", 3)),
+        render_timeout_sec=int(data.get("render_timeout_sec", 30)),
+        strict_mode=bool(data.get("strict_mode", False)),
+        dpi=int(data.get("dpi", 300)),
+    )
+
+
+def _parse_code_agent_config(data: dict[str, Any]) -> CodeAgentConfig:
+    if not data:
+        return CodeAgentConfig()
+    return CodeAgentConfig(
+        enabled=bool(data.get("enabled", True)),
+        architecture_planning=bool(data.get("architecture_planning", True)),
+        exec_fix_max_iterations=int(data.get("exec_fix_max_iterations", 3)),
+        exec_fix_timeout_sec=int(data.get("exec_fix_timeout_sec", 60)),
+        tree_search_enabled=bool(data.get("tree_search_enabled", False)),
+        tree_search_candidates=int(data.get("tree_search_candidates", 3)),
+        tree_search_max_depth=int(data.get("tree_search_max_depth", 2)),
+        tree_search_eval_timeout_sec=int(
+            data.get("tree_search_eval_timeout_sec", 120)
+        ),
+        review_max_rounds=int(data.get("review_max_rounds", 2)),
     )
 
 

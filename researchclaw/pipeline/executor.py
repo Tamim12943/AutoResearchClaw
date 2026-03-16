@@ -1615,9 +1615,10 @@ def _execute_literature_screen(
         abstract = str(row.get("abstract", "")).lower()
         text_blob = f"{title} {abstract}"
         overlap = sum(1 for kw in topic_keywords if kw in text_blob)
-        # Require at least 2 keyword hits to survive pre-filter.
-        # A single hit (e.g. "network" in an unrelated field) is too permissive.
-        if overlap >= 2:
+        # T2.2: Relaxed from ≥2 to ≥1 keyword hit — previous threshold was
+        # too aggressive (94% rejection rate).  Single-keyword matches are
+        # still screened by the LLM in the next step.
+        if overlap >= 1:
             row["keyword_overlap"] = overlap
             filtered_rows.append(row)
         else:
@@ -1658,17 +1659,38 @@ def _execute_literature_screen(
         payload = _safe_json_loads(resp.content, {})
         if isinstance(payload, dict) and isinstance(payload.get("shortlist"), list):
             shortlist = [row for row in payload["shortlist"] if isinstance(row, dict)]
+    # T2.2: Ensure minimum shortlist size of 15 for adequate related work
+    _MIN_SHORTLIST = 15
     if not shortlist:
         rows = (
-            filtered_rows[:6]
+            filtered_rows[:_MIN_SHORTLIST]
             if filtered_rows
-            else _parse_jsonl_rows(candidates_text)[:6]
+            else _parse_jsonl_rows(candidates_text)[:_MIN_SHORTLIST]
         )
         for idx, item in enumerate(rows):
-            item["relevance_score"] = round(0.75 - idx * 0.04, 3)
-            item["quality_score"] = round(0.72 - idx * 0.03, 3)
+            item["relevance_score"] = round(0.75 - idx * 0.02, 3)
+            item["quality_score"] = round(0.72 - idx * 0.015, 3)
             item["keep_reason"] = "Template screened entry"
             shortlist.append(item)
+    elif len(shortlist) < _MIN_SHORTLIST:
+        # T2.2: LLM returned too few — supplement from filtered candidates
+        existing_titles = {
+            str(s.get("title", "")).lower().strip() for s in shortlist
+        }
+        for row in filtered_rows:
+            if len(shortlist) >= _MIN_SHORTLIST:
+                break
+            title_lower = str(row.get("title", "")).lower().strip()
+            if title_lower and title_lower not in existing_titles:
+                row.setdefault("relevance_score", 0.5)
+                row.setdefault("quality_score", 0.5)
+                row.setdefault("keep_reason", "Supplemented to meet minimum shortlist")
+                shortlist.append(row)
+                existing_titles.add(title_lower)
+        logger.info(
+            "Stage 5: Supplemented shortlist to %d papers (minimum: %d)",
+            len(shortlist), _MIN_SHORTLIST,
+        )
     out = stage_dir / "shortlist.jsonl"
     _write_jsonl(out, shortlist)
     return StageResult(
@@ -5505,6 +5527,30 @@ def _execute_quality_gate(
     report.setdefault("generated", _utcnow_iso())
     (stage_dir / "quality_report.json").write_text(
         json.dumps(report, indent=2), encoding="utf-8"
+    )
+
+    # T2.1: Enforce quality gate — fail if score below threshold
+    score = report.get("score_1_to_10", 0)
+    verdict = report.get("verdict", "proceed")
+    threshold = config.research.quality_threshold or 5.0
+
+    if isinstance(score, (int, float)) and score < threshold:
+        logger.warning(
+            "Quality gate FAILED: score %.1f < threshold %.1f (verdict=%s)",
+            score, threshold, verdict,
+        )
+        return StageResult(
+            stage=Stage.QUALITY_GATE,
+            status=StageStatus.FAILED,
+            artifacts=("quality_report.json",),
+            evidence_refs=("stage-20/quality_report.json",),
+            notes=f"Quality score {score:.1f}/10 below threshold {threshold:.1f}. "
+                  f"Paper needs revision before export.",
+        )
+
+    logger.info(
+        "Quality gate PASSED: score %.1f >= threshold %.1f",
+        score, threshold,
     )
     return StageResult(
         stage=Stage.QUALITY_GATE,

@@ -393,6 +393,14 @@ _DEFAULT_BLOCKS: dict[str, str] = {
     ),
     "writing_structure": (
         "\n## Paper Section Writing Rules\n"
+        "MARKDOWN FORMATTING (CRITICAL):\n"
+        "- Use `# Title` (H1) for the paper title\n"
+        "- Use `# Abstract`, `# Introduction`, `# Method`, etc. (H1) for MAIN sections\n"
+        "- Use `## Subsection Name` (H2) for subsections WITHIN a main section\n"
+        "- NEVER use `##` for main sections — that produces wrong LaTeX heading levels\n"
+        "- NEVER wrap the paper in ```markdown fences\n"
+        "- NEVER use raw variable names (e.g., `method_name/metric_key = 0.85`) — "
+        "always use human-readable text\n\n"
         "ABSTRACT (150-200 words, 5-sentence structure):\n"
         "- (1) Problem and significance (2) Prior approaches and gaps\n"
         "- (3) Your approach and novelty (4) Key results with 2-3 specific numbers\n"
