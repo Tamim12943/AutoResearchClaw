@@ -289,8 +289,9 @@ class RendererAgent(BaseAgent):
             "-v", f"{output_dir.resolve()}:/workspace/output:rw",
             "-w", "/workspace",
             "--user", f"{os.getuid()}:{os.getgid()}",
+            "--entrypoint", "python3",
             self._docker_image,
-            "python3", "/workspace/script.py",
+            "/workspace/script.py",
         ]
 
         try:
