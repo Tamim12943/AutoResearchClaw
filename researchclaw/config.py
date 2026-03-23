@@ -869,6 +869,9 @@ def validate_config(
         # ACP provider doesn't need base_url or api_key_env
         if llm_provider == "acp" and key in ("llm.base_url", "llm.api_key_env"):
             continue
+        # Ollama has a fixed local base_url preset and needs no API key
+        if llm_provider == "ollama" and key in ("llm.base_url", "llm.api_key_env"):
+            continue
         value = _get_by_path(data, key)
         if _is_blank(value):
             errors.append(f"Missing required field: {key}")
