@@ -32,6 +32,9 @@ PROVIDER_PRESETS = {
     "minimax": {
         "base_url": "https://api.minimax.io/v1",
     },
+    "ollama": {
+        "base_url": "http://localhost:11434/v1",
+    },
     "openai-compatible": {
         "base_url": None,  # Use user-provided base_url
     },
@@ -49,6 +52,8 @@ def create_llm_client(config: RCConfig) -> LLMClient | ACPClient:
     - ``"deepseek"`` → :class:`LLMClient` with DeepSeek base URL
     - ``"novita"`` → :class:`LLMClient` with Novita AI base URL
     - ``"minimax"`` → :class:`LLMClient` with MiniMax base URL
+    - ``"ollama"`` → :class:`LLMClient` targeting a local Ollama server
+      (default: ``http://localhost:11434/v1``); no API key required
     - ``"openai-compatible"`` (default) → :class:`LLMClient` with custom base_url
 
     OpenRouter is fully compatible with the OpenAI API format, making it

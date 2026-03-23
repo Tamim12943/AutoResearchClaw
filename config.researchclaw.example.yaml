@@ -49,6 +49,14 @@ llm:
   # primary_model: "MiniMax-M2.5"
   # fallback_models:
   #   - "MiniMax-M2.5-highspeed"
+  # --- Ollama (local) provider example ---
+  # Run `ollama serve` and pull your model first, e.g.:
+  #   ollama pull llama3.2
+  # Then set:
+  # provider: "ollama"
+  # primary_model: "llama3.2"
+  # fallback_models: []
+  # No api_key or base_url needed — defaults to http://localhost:11434/v1
 
 security:
   hitl_required_stages: [5, 9, 20]
