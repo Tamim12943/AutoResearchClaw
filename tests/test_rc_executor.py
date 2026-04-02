@@ -272,6 +272,29 @@ def test_write_stage_meta_writes_expected_json(run_dir: Path) -> None:
     assert re.match(r"\d{4}-\d{2}-\d{2}T", payload["ts"])
 
 
+def test_write_stage_meta_keeps_paused_stage_as_next_stage(run_dir: Path) -> None:
+    stage_dir = run_dir / "stage-02"
+    stage_dir.mkdir()
+    result = rc_executor.StageResult(
+        stage=Stage.PROBLEM_DECOMPOSE,
+        status=StageStatus.PAUSED,
+        artifacts=("refinement_log.json",),
+        decision="resume",
+        error="ACP prompt timed out after 1800s",
+        evidence_refs=("stage-02/refinement_log.json",),
+    )
+    rc_executor._write_stage_meta(
+        stage_dir, Stage.PROBLEM_DECOMPOSE, "run-paused", result
+    )
+    payload = cast(
+        dict[str, Any],
+        json.loads((stage_dir / "decision.json").read_text(encoding="utf-8")),
+    )
+    assert payload["status"] == "paused"
+    assert payload["decision"] == "resume"
+    assert payload["next_stage"] == int(Stage.PROBLEM_DECOMPOSE)
+
+
 def test_execute_stage_creates_stage_dir_writes_artifacts_and_meta(
     monkeypatch: pytest.MonkeyPatch,
     run_dir: Path,
@@ -750,6 +773,45 @@ class TestIterativeRefine:
         )
         assert payload["stop_reason"] == "llm_unavailable"
         assert result.status == StageStatus.DONE
+
+    def test_refine_acp_timeout_pauses_for_resume(
+        self,
+        run_dir: Path,
+        rc_config: RCConfig,
+        adapters: AdapterBundle,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        self._prepare_refine_inputs(run_dir)
+        stage_dir = run_dir / "stage-13"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+
+        from researchclaw.pipeline.stage_impls import _execution as execution_impl
+
+        def _timeout(*args, **kwargs):
+            _ = args, kwargs
+            raise RuntimeError("ACP prompt timed out after 1800s")
+
+        monkeypatch.setattr(execution_impl, "_chat_with_prompt", _timeout)
+
+        result = rc_executor._execute_iterative_refine(
+            stage_dir,
+            run_dir,
+            rc_config,
+            adapters,
+            llm=FakeLLMClient("unused"),
+        )
+
+        payload = json.loads(
+            (stage_dir / "refinement_log.json").read_text(encoding="utf-8")
+        )
+        assert result.status == StageStatus.PAUSED
+        assert result.decision == "resume"
+        assert result.artifacts == ("refinement_log.json",)
+        assert payload["paused"] is True
+        assert payload["stop_reason"] == "acp_prompt_timeout"
+        assert payload["pause_iteration"] == 1
+        assert payload["best_version"] == "experiment/"
+        assert not (stage_dir / "experiment_final").exists()
 
     def test_refine_with_llm_generates_improved_code(
         self,
@@ -2082,7 +2144,8 @@ class TestDataIntegrityBlock:
     """Test paper draft blocked when no metrics exist (R4-2a)."""
 
     def test_paper_draft_blocked_with_no_metrics(
-        self, tmp_path: Path, run_dir: Path, rc_config: RCConfig, adapters: AdapterBundle
+        self, tmp_path: Path, run_dir: Path, rc_config: RCConfig, adapters: AdapterBundle,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # Write prior artifacts with NO metrics
         _write_prior_artifact(run_dir, 16, "outline.md", "# Outline\n## Abstract\n")
@@ -2096,6 +2159,13 @@ class TestDataIntegrityBlock:
 
         stage_dir = run_dir / "stage-17"
         stage_dir.mkdir(parents=True, exist_ok=True)
+
+        # Ensure domain detection returns an empirical domain so the block triggers
+        from researchclaw.pipeline.stage_impls import _paper_writing
+        monkeypatch.setattr(
+            _paper_writing, "_detect_domain",
+            lambda topic, domains=(): ("ml", "machine learning", "NeurIPS, ICML, ICLR"),
+        )
 
         llm = FakeLLMClient("should not be called")
         result = rc_executor._execute_paper_draft(
@@ -3285,8 +3355,94 @@ class TestValidateDraftQuality:
         rc_executor._validate_draft_quality(draft, stage_dir=tmp_path)
         assert (tmp_path / "draft_quality.json").exists()
         data = json.loads(
-            (tmp_path / "draft_quality.json").read_text()
+            (tmp_path / "draft_quality.json").read_text(encoding="utf-8")
         )
         assert "section_analysis" in data
         assert "overall_warnings" in data
         assert "revision_directives" in data
+
+
+class TestExperimentValidatorPrecision:
+    def test_deep_validation_detects_undefined_helper_calls(self) -> None:
+        from researchclaw.experiment.validator import deep_validate_files
+
+        issues = deep_validate_files(
+            {
+                "main.py": (
+                    "def main():\n"
+                    "    create_empty_csv('tmp.csv', ['a'])\n\n"
+                    "if __name__ == '__main__':\n"
+                    "    main()\n"
+                )
+            }
+        )
+
+        assert any(
+            "Call to undefined function 'create_empty_csv()'" in issue
+            for issue in issues
+        )
+
+    def test_deep_validation_allows_inherited_single_core_method_subclass(
+        self,
+    ) -> None:
+        from researchclaw.experiment.validator import deep_validate_files
+
+        issues = deep_validate_files(
+            {
+                "main.py": (
+                    "class BaseVerifier:\n"
+                    "    def __init__(self, scale=1.0):\n"
+                    "        self.scale = float(scale)\n\n"
+                    "class ChildVerifier(BaseVerifier):\n"
+                    "    def predict(self, value):\n"
+                    "        total = value * self.scale\n"
+                    "        shifted = total + 1.0\n"
+                    "        centered = shifted - 0.5\n"
+                    "        bounded = max(centered, 0.0)\n"
+                    "        return {'score': bounded}\n"
+                )
+            }
+        )
+
+        assert not any(
+            "Class 'ChildVerifier' has only 1 non-dunder method" in issue
+            for issue in issues
+        )
+
+    def test_deep_validation_detects_duplicate_algorithm_classes_across_files(
+        self,
+    ) -> None:
+        from researchclaw.experiment.validator import deep_validate_files
+
+        issues = deep_validate_files(
+            {
+                "main.py": (
+                    "class DuplicateVerifier:\n"
+                    "    def __init__(self, bias=0.0):\n"
+                    "        self.bias = float(bias)\n\n"
+                    "    def predict(self, value):\n"
+                    "        shifted = value + self.bias\n"
+                    "        bounded = max(shifted, 0.0)\n"
+                    "        return {'score': bounded}\n"
+                ),
+                "models.py": (
+                    "class DuplicateVerifier:\n"
+                    "    def __init__(self, bias=0.0):\n"
+                    "        self.bias = float(bias)\n\n"
+                    "    def predict(self, value):\n"
+                    "        shifted = value + self.bias\n"
+                    "        bounded = max(shifted, 0.0)\n"
+                    "        return {'score': bounded}\n"
+                ),
+            }
+        )
+
+        assert any(
+            "Class 'DuplicateVerifier' is defined in multiple files" in issue
+            for issue in issues
+        )
+        assert not any(
+            "Classes 'DuplicateVerifier' and 'DuplicateVerifier' have identical"
+            in issue
+            for issue in issues
+        )

@@ -2,6 +2,7 @@
 """Tests for ssh_remote and colab_drive experiment backends."""
 from __future__ import annotations
 
+import gc
 import json
 import textwrap
 import time
@@ -103,6 +104,19 @@ class TestSshRemoteSandboxCommands:
         cmd = sb._build_bare_exec_cmd("/tmp/rc-test", entry_point="main.py")
         assert "CUDA_VISIBLE_DEVICES" not in cmd
 
+    def test_bare_exec_cmd_forwards_args_and_env(self, tmp_path: Path):
+        cfg = SshRemoteConfig(host="server", user="test", remote_python="python3")
+        sb = SshRemoteSandbox(cfg, tmp_path)
+        cmd = sb._build_bare_exec_cmd(
+            "/tmp/rc-test",
+            entry_point="main.py",
+            args=["--foo", "bar baz"],
+            env_overrides={"A_ENV": "1", "B_ENV": "two words"},
+        )
+        assert "A_ENV=1" in cmd
+        assert "B_ENV='two words'" in cmd
+        assert "python3 -u main.py --foo 'bar baz'" in cmd
+
     def test_docker_exec_cmd(self, tmp_path: Path):
         cfg = SshRemoteConfig(
             host="server", user="test",
@@ -123,6 +137,23 @@ class TestSshRemoteSandboxCommands:
         assert "device=0" in cmd
         assert "myimage:latest" in cmd
         assert cmd.endswith("main.py")
+
+    def test_docker_exec_cmd_forwards_args_and_env(self, tmp_path: Path):
+        cfg = SshRemoteConfig(
+            host="server",
+            user="test",
+            use_docker=True,
+            docker_image="myimage:latest",
+        )
+        sb = SshRemoteSandbox(cfg, tmp_path)
+        cmd = sb._build_docker_exec_cmd(
+            "/tmp/rc-test",
+            entry_point="main.py",
+            args=["--foo", "bar"],
+            env_overrides={"A_ENV": "1"},
+        )
+        assert "-e A_ENV=1" in cmd
+        assert cmd.endswith("main.py --foo bar")
 
     def test_docker_exec_full_network(self, tmp_path: Path):
         cfg = SshRemoteConfig(
@@ -508,3 +539,58 @@ class TestAcpSessionReconnect:
         with pytest.raises(RuntimeError, match="permission denied"):
             client._send_prompt("test prompt")
         assert call_count == 1  # no retry
+
+
+# ===========================================================================
+# ACP weakref accumulation tests (Issue #33)
+# ===========================================================================
+
+class TestAcpWeakrefCleanup:
+    def setup_method(self):
+        """Reset class state between tests."""
+        from researchclaw.llm.acp_client import ACPClient
+        ACPClient._live_instances.clear()
+        ACPClient._atexit_registered = False
+
+    def test_dead_weakrefs_pruned(self):
+        """Dead weakrefs are removed when a new instance is created."""
+        from researchclaw.llm.acp_client import ACPClient, ACPConfig
+
+        a = ACPClient(ACPConfig(agent="claude"))
+        b = ACPClient(ACPConfig(agent="claude"))
+        assert len(ACPClient._live_instances) == 2
+
+        del a
+        gc.collect()
+
+        c = ACPClient(ACPConfig(agent="claude"))
+        # Only b and c should remain (dead ref from 'a' pruned)
+        assert len(ACPClient._live_instances) == 2
+        live = [r() for r in ACPClient._live_instances]
+        assert b in live
+        assert c in live
+
+    def test_atexit_registered_once(self):
+        """atexit.register is called exactly once across multiple instances."""
+        with mock.patch("researchclaw.llm.acp_client.atexit") as mock_atexit:
+            from researchclaw.llm.acp_client import ACPClient, ACPConfig
+            ACPClient._atexit_registered = False
+            ACPClient(ACPConfig(agent="claude"))
+            ACPClient(ACPConfig(agent="claude"))
+            ACPClient(ACPConfig(agent="claude"))
+            assert mock_atexit.register.call_count == 1
+
+    def test_atexit_cleanup_closes_live_and_clears(self):
+        """_atexit_cleanup calls close() on live instances and clears list."""
+        from researchclaw.llm.acp_client import ACPClient, ACPConfig
+
+        a = ACPClient(ACPConfig(agent="claude"))
+        b = ACPClient(ACPConfig(agent="claude"))
+        a.close = mock.Mock()  # type: ignore[method-assign]
+        b.close = mock.Mock()  # type: ignore[method-assign]
+
+        ACPClient._atexit_cleanup()
+
+        a.close.assert_called_once()
+        b.close.assert_called_once()
+        assert len(ACPClient._live_instances) == 0

@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -137,6 +138,8 @@ class DockerSandbox:
         *,
         entry_point: str = "main.py",
         timeout_sec: int = 300,
+        args: list[str] | None = None,
+        env_overrides: dict[str, str] | None = None,
     ) -> SandboxResult:
         """Run a multi-file experiment project inside a container."""
         self._run_counter += 1
@@ -188,7 +191,13 @@ class DockerSandbox:
                 metrics={},
             )
 
-        return self._execute(staging, entry_point=entry_point, timeout_sec=timeout_sec)
+        return self._execute(
+            staging,
+            entry_point=entry_point,
+            timeout_sec=timeout_sec,
+            entry_args=args,
+            env_overrides=env_overrides,
+        )
 
     # ------------------------------------------------------------------
     # Static helpers
@@ -253,7 +262,13 @@ class DockerSandbox:
     # ------------------------------------------------------------------
 
     def _execute(
-        self, staging_dir: Path, *, entry_point: str, timeout_sec: int
+        self,
+        staging_dir: Path,
+        *,
+        entry_point: str,
+        timeout_sec: int,
+        entry_args: list[str] | None = None,
+        env_overrides: dict[str, str] | None = None,
     ) -> SandboxResult:
         """Core execution: single container, three-phase via entrypoint.sh."""
         cfg = self.config
@@ -268,6 +283,8 @@ class DockerSandbox:
             staging_dir,
             entry_point=entry_point,
             container_name=container_name,
+            entry_args=entry_args,
+            env_overrides=env_overrides,
         )
 
         start = time.monotonic()
@@ -278,6 +295,8 @@ class DockerSandbox:
                 cmd,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout_sec,
                 check=False,
             )
@@ -348,6 +367,8 @@ class DockerSandbox:
         *,
         entry_point: str,
         container_name: str,
+        entry_args: list[str] | None = None,
+        env_overrides: dict[str, str] | None = None,
     ) -> list[str]:
         """Build the ``docker run`` command list.
 
@@ -370,10 +391,19 @@ class DockerSandbox:
         ]
 
         # --- Network policy ---
+        # On POSIX, run the container as the host user so that files
+        # written to the bind-mounted volume are owned by the caller.
+        # os.getuid / os.getgid are not available on Windows; fall back
+        # to running as the default container user (usually root).
+        def _user_flag() -> list[str]:
+            if sys.platform == "win32":
+                return []
+            return ["--user", f"{os.getuid()}:{os.getgid()}"]
+
         if cfg.network_policy == "none":
             # Fully isolated — no network at any point
             cmd.extend(["--network", "none"])
-            cmd.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
+            cmd.extend(_user_flag())
         elif cfg.network_policy in ("setup_only", "pip_only"):
             # Network during Phase 0+1, disabled via iptables before Phase 2.
             # Run as host user so experiment can write results.json to volume.
@@ -381,11 +411,11 @@ class DockerSandbox:
             # the user lacks root — network remains available but the code
             # has already been validated by the pipeline security check.
             cmd.extend(["-e", "RC_SETUP_ONLY_NETWORK=1"])
-            cmd.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
+            cmd.extend(_user_flag())
             cmd.extend(["--cap-add=NET_ADMIN"])
         elif cfg.network_policy == "full":
             # Full network throughout — for development/debugging
-            cmd.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
+            cmd.extend(_user_flag())
 
         # Mount pre-cached datasets
         # Priority: /opt/datasets (system) > ~/.cache/datasets (user)
@@ -443,9 +473,20 @@ class DockerSandbox:
             else:
                 cmd.extend(["--gpus", "all"])
 
+        _SAFE_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+        if env_overrides:
+            for name, value in sorted(env_overrides.items()):
+                if not value or not _SAFE_ENV_NAME.match(name):
+                    continue
+                # Strip null bytes from values to prevent subprocess ValueError
+                safe_value = str(value).replace("\x00", "")
+                cmd.extend(["-e", f"{name}={safe_value}"])
+
         # Image + entry point (passed as CMD arg to entrypoint.sh)
         cmd.append(cfg.image)
         cmd.append(entry_point)
+        if entry_args:
+            cmd.extend(entry_args)
 
         return cmd
 

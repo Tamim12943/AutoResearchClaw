@@ -13,7 +13,6 @@ import yaml
 from researchclaw.adapters import AdapterBundle
 from researchclaw.config import RCConfig
 from researchclaw.llm.client import LLMClient
-from researchclaw.pipeline._domain import _detect_domain
 from researchclaw.pipeline._helpers import (
     StageResult,
     _build_context_preamble,
@@ -275,14 +274,25 @@ def _execute_experiment_design(
     # BUG-40: Skip BenchmarkAgent for non-ML domains — it has no relevant
     # benchmarks for physics/chemistry/mathematics/etc. and would inject
     # wrong datasets (e.g., CIFAR-10 for PDE topics).
-    _ba_domain_id, _, _ = _detect_domain(
-        config.research.topic,
-        tuple(config.research.domains) if config.research.domains else (),
+    _ba_domain_profile = _domain_profile
+    if _ba_domain_profile is None:
+        try:
+            from researchclaw.domains.detector import detect_domain as _detect_domain_adv
+            _ba_domain_profile = _detect_domain_adv(
+                topic=config.research.topic,
+                hypotheses=hypotheses,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("BenchmarkAgent domain detection unavailable", exc_info=True)
+    _ba_domain_id = (
+        _ba_domain_profile.domain_id
+        if _ba_domain_profile is not None
+        else "generic"
     )
-    _ba_domain_ok = _ba_domain_id == "ml"
+    _ba_domain_ok = _ba_domain_id.startswith("ml_")
     if not _ba_domain_ok:
         logger.info(
-            "BenchmarkAgent skipped: domain '%s' is not ML (topic: %s)",
+            "BenchmarkAgent skipped: domain profile '%s' is not an ML profile (topic: %s)",
             _ba_domain_id, config.research.topic[:80],
         )
     if (
@@ -431,6 +441,57 @@ def _execute_experiment_design(
                 "Stage 9: Trimmed ablations %d → %d",
                 len(_ablations), _ablation_budget,
             )
+
+    # --- HITL: Read human guidance if available ---
+    guidance_file = stage_dir / "hitl_guidance.md"
+    if guidance_file.exists():
+        try:
+            guidance = guidance_file.read_text(encoding="utf-8").strip()
+            if guidance and llm is not None and isinstance(plan, dict):
+                logger.info("Applying HITL guidance to experiment design")
+                resp = llm.chat(
+                    [{"role": "user", "content": (
+                        f"The human researcher provided this guidance for "
+                        f"the experiment design:\n\n{guidance}\n\n"
+                        f"Current experiment plan:\n"
+                        f"```yaml\n{yaml.dump(plan, default_flow_style=False)}\n```\n\n"
+                        f"Update the YAML plan to incorporate the guidance. "
+                        f"Return ONLY the updated YAML."
+                    )}],
+                    max_tokens=4096,
+                )
+                updated = _extract_yaml_block(resp.content)
+                try:
+                    parsed_update = yaml.safe_load(updated)
+                    if isinstance(parsed_update, dict):
+                        plan = parsed_update
+                except yaml.YAMLError:
+                    pass
+        except Exception:
+            logger.debug("HITL guidance application failed (non-blocking)")
+
+    # --- HITL: Baseline Navigator data persistence ---
+    try:
+        from researchclaw.hitl.workshops.baseline import BaselineNavigator, BaselineCandidate
+
+        nav = BaselineNavigator(run_dir, llm_client=llm)
+        if isinstance(plan, dict):
+            baselines = plan.get("baselines", [])
+            if isinstance(baselines, list):
+                for b in baselines:
+                    if isinstance(b, dict):
+                        nav.baselines.append(BaselineCandidate(
+                            name=b.get("name", str(b)),
+                            description=b.get("description", ""),
+                        ))
+                    elif isinstance(b, str):
+                        nav.baselines.append(BaselineCandidate(name=b))
+            metrics = plan.get("metrics", [])
+            if isinstance(metrics, list):
+                nav.metrics = [str(m) for m in metrics]
+        nav.save()
+    except Exception:
+        pass
 
     (stage_dir / "exp_plan.yaml").write_text(
         yaml.dump(plan, default_flow_style=False, allow_unicode=True),

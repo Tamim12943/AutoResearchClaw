@@ -67,14 +67,18 @@ class ACPClient:
 
     # Track live instances for atexit cleanup (weak refs to avoid preventing GC)
     _live_instances: list[weakref.ref[ACPClient]] = []
+    _atexit_registered: bool = False
 
     def __init__(self, acp_config: ACPConfig) -> None:
         self.config = acp_config
         self._acpx: str | None = acp_config.acpx_command or None
         self._session_ready = False
-        # Register for atexit cleanup to prevent zombie acpx processes
+        # Prune dead weakrefs, then track this instance
+        ACPClient._live_instances = [r for r in ACPClient._live_instances if r() is not None]
         ACPClient._live_instances.append(weakref.ref(self))
-        atexit.register(ACPClient._atexit_cleanup)
+        if not ACPClient._atexit_registered:
+            atexit.register(ACPClient._atexit_cleanup)
+            ACPClient._atexit_registered = True
 
     @classmethod
     def from_rc_config(cls, rc_config: Any) -> ACPClient:
@@ -152,7 +156,8 @@ class ACPClient:
                 [acpx, "--ttl", "0", "--cwd", self._abs_cwd(),
                  self.config.agent, "sessions", "close",
                  self.config.session_name],
-                capture_output=True, timeout=15,
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=15,
             )
         except Exception:  # noqa: BLE001
             pass
@@ -223,8 +228,15 @@ class ACPClient:
         self._session_ready = True
         logger.info("ACP session '%s' ready (%s)", self.config.session_name, self.config.agent)
 
-    # Linux MAX_ARG_STRLEN is 128 KB; Windows CreateProcess limit is ~32 KB.
-    _MAX_CLI_PROMPT_BYTES = 30_000 if sys.platform == "win32" else 100_000
+    # Linux MAX_ARG_STRLEN is 128 KB; Windows CreateProcess limit is ~32 KB
+    # for the entire command line, not just the prompt payload. acpx adds
+    # several fixed arguments plus quoting overhead, so leave generous headroom
+    # on Windows and switch to temp-file transport earlier.
+    _MAX_CLI_PROMPT_BYTES = 20_000 if sys.platform == "win32" else 100_000
+    # On Windows, npm-installed CLIs usually resolve to ``.cmd`` launchers,
+    # which are routed through ``cmd.exe`` and hit a much smaller practical
+    # command-line limit (~8 KB). Use file transport much earlier there.
+    _MAX_CMD_WRAPPER_PROMPT_BYTES = 6_000 if sys.platform == "win32" else 100_000
 
     # Localized error snippets for "command line too long" (may be in any OS language)
     _CMD_TOO_LONG_HINTS = (
@@ -243,6 +255,16 @@ class ACPClient:
     )
     _MAX_RECONNECT_ATTEMPTS = 2
 
+    @classmethod
+    def _cli_prompt_limit(cls, acpx: str | None) -> int:
+        """Return the safe inline-prompt size for the resolved ACP launcher."""
+        limit = cls._MAX_CLI_PROMPT_BYTES
+        if sys.platform == "win32" and acpx:
+            lower = acpx.lower()
+            if lower.endswith((".cmd", ".bat")):
+                return min(limit, cls._MAX_CMD_WRAPPER_PROMPT_BYTES)
+        return limit
+
     def _send_prompt(self, prompt: str) -> str:
         """Send a prompt via acpx and return the response text.
 
@@ -253,16 +275,23 @@ class ACPClient:
         If the session has died (common after long-running stages), retries
         up to ``_MAX_RECONNECT_ATTEMPTS`` times with automatic reconnection.
         """
+        # Sanitize null bytes that may originate from web-scraped content
+        # or OpenAlex API responses — subprocess.run() rejects \x00 because
+        # the underlying C execve() treats it as a string terminator.
+        prompt = prompt.replace("\x00", "")
+
         acpx = self._resolve_acpx()
         if not acpx:
             raise RuntimeError("acpx not found")
 
         prompt_bytes = len(prompt.encode("utf-8"))
-        use_file = prompt_bytes > self._MAX_CLI_PROMPT_BYTES
+        prompt_limit = self._cli_prompt_limit(acpx)
+        use_file = prompt_bytes > prompt_limit
         if use_file:
             logger.info(
-                "Prompt too large for CLI arg (%d bytes). Using temp file.",
+                "Prompt too large for CLI arg (%d bytes > %d). Using temp file.",
                 prompt_bytes,
+                prompt_limit,
             )
 
         last_exc: RuntimeError | None = None
