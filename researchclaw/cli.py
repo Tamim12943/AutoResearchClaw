@@ -646,8 +646,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         )
         return 1
 
-    # Interactive provider prompt (TTY only, else default to openai)
-    choice = "1"
+    # Interactive provider prompt (TTY only, else default to local Ollama)
+    choice = "6"
     if sys.stdin.isatty():
         print("Select LLM provider:")
         print("  1) openai       (requires OPENAI_API_KEY)")
@@ -657,7 +657,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         print("  5) acp          (Copilot/Gemini CLI via ACP — no API key needed)")
         print("  6) ollama       (local model server — no API key needed)")
         try:
-            raw = input("Choice [1]: ").strip()
+            raw = input("Choice [6]: ").strip()
         except (EOFError, KeyboardInterrupt):
             raw = ""
         if raw in _PROVIDER_CHOICES:

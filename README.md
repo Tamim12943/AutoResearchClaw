@@ -132,9 +132,11 @@ researchclaw init          # Interactive: choose LLM provider, creates config.ar
 # Or manually: cp config.researchclaw.example.yaml config.arc.yaml
 
 # 4. Run
-export OPENAI_API_KEY="sk-..."
 researchclaw run --config config.arc.yaml --topic "Your research idea" --auto-approve
 ```
+
+> `researchclaw init` is local-first by default: it preconfigures **Ollama** (`qwen2.5:14b` with `qwen3.5:4b` fallback, no API key required).  
+> If needed, you can switch to **ACP** (`llm.provider: "acp"`) and set `llm.acp.agent` to `gh` (Copilot CLI) or `gemini` (Gemini CLI).
 
 Output → `artifacts/rc-YYYYMMDD-HHMMSS-<hash>/deliverables/` — compile-ready LaTeX, BibTeX, experiment code, charts.
 
@@ -149,10 +151,11 @@ research:
   topic: "Your research topic here"
 
 llm:
-  base_url: "https://api.openai.com/v1"
-  api_key_env: "OPENAI_API_KEY"
-  primary_model: "gpt-4o"
-  fallback_models: ["gpt-4o-mini"]
+  provider: "ollama"
+  base_url: "http://localhost:11434/v1"
+  api_key_env: ""
+  primary_model: "qwen2.5:14b"
+  fallback_models: ["qwen3.5:4b"]
 
 experiment:
   mode: "sandbox"
@@ -594,15 +597,15 @@ runtime:
 
 # === LLM ===
 llm:
-  provider: "openai-compatible"    # openai | openrouter | deepseek | minimax | acp | openai-compatible
-  base_url: "https://..."          # API endpoint (required for openai-compatible)
-  api_key_env: "OPENAI_API_KEY"    # Env var for API key (required for openai-compatible)
+  provider: "ollama"               # ollama (local) | acp | openai | openrouter | deepseek | minimax | openai-compatible
+  base_url: "http://localhost:11434/v1"  # Ollama local endpoint
+  api_key_env: ""                  # Not needed for ollama/acp
   api_key: ""                      # Or hardcode key here
-  primary_model: "gpt-4o"          # Primary model
-  fallback_models: ["gpt-4o-mini"] # Fallback chain
+  primary_model: "qwen2.5:14b"     # Primary local model
+  fallback_models: ["qwen3.5:4b"]  # Fallback chain
   s2_api_key: ""                   # Semantic Scholar API key (optional, higher rate limits)
   acp:                             # Only used when provider: "acp"
-    agent: "claude"                # ACP agent CLI command (claude, codex, gemini, etc.)
+    agent: "gh"                    # ACP agent CLI command (gh/copilot, gemini, claude, codex, etc.)
     cwd: "."                       # Working directory for the agent
 
 # === Experiment ===
@@ -622,6 +625,7 @@ experiment:
     network_policy: "setup_only"   # none | setup_only | pip_only | full
     gpu_enabled: true
     memory_limit_mb: 8192
+    # For AMD ROCm hosts, use a ROCm-compatible image and map /dev/kfd + /dev/dri.
     auto_install_deps: true        # Auto-detect imports → requirements.txt
   ssh_remote:
     host: ""                       # GPU server hostname
