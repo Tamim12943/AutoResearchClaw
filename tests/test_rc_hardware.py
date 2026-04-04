@@ -11,6 +11,7 @@ from researchclaw.hardware import (
     HardwareProfile,
     _detect_mps,
     _detect_nvidia,
+    _detect_rocm,
     detect_hardware,
     ensure_torch_available,
     is_metric_name,
@@ -97,6 +98,48 @@ class TestDetectNvidia:
 
 
 # ---------------------------------------------------------------------------
+# ROCm detection
+# ---------------------------------------------------------------------------
+
+class TestDetectRocm:
+    def test_rocm_smi_detects_amd_gpu(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = (
+            "GPU[0]          : Card series: Radeon RX 6700 XT\n"
+            "GPU[0]          : VRAM Total Memory (B): 12884901888\n"
+        )
+
+        with patch("researchclaw.hardware.subprocess.run", return_value=mock_result):
+            profile = _detect_rocm()
+
+        assert profile is not None
+        assert profile.has_gpu is True
+        assert profile.gpu_type == "rocm"
+        assert profile.gpu_name == "Radeon RX 6700 XT"
+        assert profile.vram_mb == 12288
+        assert profile.tier == "high"
+
+    def test_rocminfo_fallback_detects_amd(self):
+        first = MagicMock()
+        first.returncode = 1
+        first.stdout = ""
+        second = MagicMock()
+        second.returncode = 0
+        second.stdout = "Agent 1: Name: gfx1031 AMD Radeon"
+
+        with patch(
+            "researchclaw.hardware.subprocess.run",
+            side_effect=[first, second],
+        ):
+            profile = _detect_rocm()
+
+        assert profile is not None
+        assert profile.gpu_type == "rocm"
+        assert "ROCm" in profile.gpu_name
+
+
+# ---------------------------------------------------------------------------
 # MPS detection
 # ---------------------------------------------------------------------------
 
@@ -140,6 +183,7 @@ class TestDetectHardware:
     def test_falls_back_to_cpu(self):
         with (
             patch("researchclaw.hardware._detect_nvidia", return_value=None),
+            patch("researchclaw.hardware._detect_rocm", return_value=None),
             patch("researchclaw.hardware._detect_mps", return_value=None),
         ):
             profile = detect_hardware()
@@ -165,6 +209,24 @@ class TestDetectHardware:
             profile = detect_hardware()
 
         assert profile.gpu_type == "cuda"
+
+    def test_rocm_after_nvidia_before_mps(self):
+        rocm_profile = HardwareProfile(
+            has_gpu=True, gpu_type="rocm", gpu_name="RX 6700 XT",
+            vram_mb=12288, tier="high", warning="",
+        )
+        mps_profile = HardwareProfile(
+            has_gpu=True, gpu_type="mps", gpu_name="M3",
+            vram_mb=None, tier="limited", warning="MPS",
+        )
+        with (
+            patch("researchclaw.hardware._detect_nvidia", return_value=None),
+            patch("researchclaw.hardware._detect_rocm", return_value=rocm_profile),
+            patch("researchclaw.hardware._detect_mps", return_value=mps_profile),
+        ):
+            profile = detect_hardware()
+
+        assert profile.gpu_type == "rocm"
 
 
 # ---------------------------------------------------------------------------

@@ -68,6 +68,19 @@ class TestOllamaPreset:
     def test_ollama_base_url(self):
         assert PROVIDER_PRESETS["ollama"]["base_url"] == "http://localhost:11434/v1"
 
+    def test_ollama_in_cli_provider_choices(self):
+        from researchclaw.cli import _PROVIDER_CHOICES
+
+        found = any(v[0] == "ollama" for v in _PROVIDER_CHOICES.values())
+        assert found, "ollama not found in _PROVIDER_CHOICES"
+
+    def test_ollama_provider_models_defaults(self):
+        from researchclaw.cli import _PROVIDER_MODELS
+
+        primary, fallbacks = _PROVIDER_MODELS["ollama"]
+        assert primary == "qwen2.5:14b"
+        assert "qwen3.5:4b" in fallbacks
+
 
 # ---------------------------------------------------------------------------
 # Unit tests — from_rc_config wiring
