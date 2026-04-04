@@ -320,6 +320,51 @@ def test_cmd_init_force_overwrites(
     assert (tmp_path / "config.arc.yaml").read_text(encoding="utf-8") != "old\n"
 
 
+def test_cmd_init_interactive_ollama_choice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_example_config(tmp_path / "config.researchclaw.example.yaml")
+
+    class _TTYStdin:
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.setattr("sys.stdin", _TTYStdin())
+    monkeypatch.setattr("builtins.input", lambda _p: "6")
+    args = argparse.Namespace(force=False)
+    code = rc_cli.cmd_init(args)
+    assert code == 0
+
+    content = (tmp_path / "config.arc.yaml").read_text(encoding="utf-8")
+    assert 'provider: "ollama"' in content
+    assert 'base_url: "http://localhost:11434/v1"' in content
+    assert 'api_key_env: ""' in content
+    assert 'primary_model: "qwen2.5:14b"' in content
+
+
+def test_cmd_init_interactive_acp_choice_clears_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_example_config(tmp_path / "config.researchclaw.example.yaml")
+
+    class _TTYStdin:
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.setattr("sys.stdin", _TTYStdin())
+    monkeypatch.setattr("builtins.input", lambda _p: "5")
+    args = argparse.Namespace(force=False)
+    code = rc_cli.cmd_init(args)
+    assert code == 0
+
+    content = (tmp_path / "config.arc.yaml").read_text(encoding="utf-8")
+    assert 'provider: "acp"' in content
+    assert 'base_url: ""' in content
+    assert 'api_key_env: ""' in content
+
+
 def test_cmd_run_missing_config_shows_init_hint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

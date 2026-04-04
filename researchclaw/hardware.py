@@ -31,7 +31,7 @@ class HardwareProfile:
     """Detected hardware capabilities of the local machine."""
 
     has_gpu: bool
-    gpu_type: str  # "cuda" | "mps" | "cpu"
+    gpu_type: str  # "cuda" | "rocm" | "mps" | "cpu"
     gpu_name: str  # e.g. "NVIDIA RTX 4090" / "Apple M3 Pro" / "CPU only"
     vram_mb: int | None  # NVIDIA only; None for MPS/CPU
     tier: str  # "high" | "limited" | "cpu_only"
@@ -49,8 +49,9 @@ def detect_hardware(ssh_config: object | None = None) -> HardwareProfile:
 
     Detection order:
     1. NVIDIA GPU via ``nvidia-smi`` (remote or local)
-    2. macOS Apple Silicon (MPS) via platform check (local only)
-    3. Fallback to CPU-only
+    2. AMD ROCm GPU via ``rocm-smi`` / ``rocminfo`` (local only)
+    3. macOS Apple Silicon (MPS) via platform check (local only)
+    4. Fallback to CPU-only
     """
     # --- Remote detection via SSH ---
     if ssh_config is not None:
@@ -73,6 +74,11 @@ def detect_hardware(ssh_config: object | None = None) -> HardwareProfile:
 
     # --- Try local NVIDIA ---
     profile = _detect_nvidia()
+    if profile is not None:
+        return profile
+
+    # --- Try local AMD ROCm ---
+    profile = _detect_rocm()
     if profile is not None:
         return profile
 
@@ -202,6 +208,88 @@ def _detect_nvidia() -> HardwareProfile | None:
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None
+
+
+def _detect_rocm() -> HardwareProfile | None:
+    """Detect AMD GPU via ROCm utilities."""
+    # Try rocm-smi first (best signal for installed ROCm stack)
+    try:
+        result = subprocess.run(
+            ["rocm-smi", "--showproductname", "--showmeminfo", "vram"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=12,
+            check=False,
+        )
+        if result.returncode == 0:
+            out = result.stdout
+            # Typical line contains card/model name and VRAM in bytes.
+            name = "AMD GPU (ROCm)"
+            vram_mb: int | None = None
+
+            import re as _re
+
+            name_match = _re.search(r"Card series:\s*(.+)", out)
+            if name_match:
+                name = name_match.group(1).strip()
+
+            vram_match = _re.search(r"Total Memory \(B\):\s*(\d+)", out)
+            if vram_match:
+                try:
+                    vram_mb = int(int(vram_match.group(1)) / (1024 * 1024))
+                except ValueError:
+                    vram_mb = None
+
+            if vram_mb is None:
+                tier = "limited"
+            else:
+                tier = "high" if vram_mb >= _HIGH_VRAM_THRESHOLD_MB else "limited"
+
+            warning = "" if tier == "high" else (
+                f"Local AMD GPU ({name}"
+                + (f", {vram_mb} MB VRAM" if vram_mb is not None else "")
+                + ") has limited memory/performance for large models."
+            )
+            return HardwareProfile(
+                has_gpu=True,
+                gpu_type="rocm",
+                gpu_name=name,
+                vram_mb=vram_mb,
+                tier=tier,
+                warning=warning,
+            )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+
+    # Fallback probe: rocminfo presence implies ROCm-capable runtime.
+    try:
+        result = subprocess.run(
+            ["rocminfo"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=12,
+            check=False,
+        )
+        if result.returncode == 0 and "AMD" in result.stdout:
+            return HardwareProfile(
+                has_gpu=True,
+                gpu_type="rocm",
+                gpu_name="AMD GPU (ROCm)",
+                vram_mb=None,
+                tier="limited",
+                warning=(
+                    "AMD ROCm GPU detected. Ensure your environment has a ROCm-enabled "
+                    "PyTorch build for GPU acceleration."
+                ),
+            )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+
+    return None
 
 
 def _detect_mps() -> HardwareProfile | None:

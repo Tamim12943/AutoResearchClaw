@@ -107,15 +107,16 @@ def _execute_code_generation(
             gpu_type = hw_profile.get("gpu_type", "cuda")
             gpu_name = hw_profile.get("gpu_name", "GPU")
             tier = hw_profile.get("tier", "limited")
+            device_type = "cuda" if gpu_type == "rocm" else gpu_type
             if tier == "high":
-                device_hint = f"torch.device('{gpu_type}')"
+                device_hint = f"torch.device('{device_type}')"
                 pkg_hint = (
                     f"\nAVAILABLE PACKAGES ({pkg_prefix}): Python stdlib, numpy, torch, sklearn, scipy, pandas{pkg_extras}.\n"
                     f"GPU: {gpu_name} ({gpu_type}). You MAY use PyTorch with GPU acceleration.\n"
                     f"Use `device = {device_hint}` for tensor operations.\n"
                 )
             else:  # limited (low VRAM NVIDIA or MPS)
-                device_hint = f"torch.device('{gpu_type}')"
+                device_hint = f"torch.device('{device_type}')"
                 pkg_hint = (
                     f"\nAVAILABLE PACKAGES ({pkg_prefix}): Python stdlib, numpy, torch, sklearn, scipy, pandas{pkg_extras}.\n"
                     f"GPU: {gpu_name} ({gpu_type}) — LIMITED performance.\n"
@@ -1361,4 +1362,3 @@ Multi-file experiment project with {len(files)} file(s): {file_list}
         artifacts=tuple(artifacts),
         evidence_refs=tuple(f"stage-10/{a}" for a in artifacts),
     )
-

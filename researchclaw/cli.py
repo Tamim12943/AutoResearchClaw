@@ -599,6 +599,7 @@ _PROVIDER_CHOICES = {
     "3": ("deepseek", "DEEPSEEK_API_KEY"),
     "4": ("minimax", "MINIMAX_API_KEY"),
     "5": ("acp", ""),
+    "6": ("ollama", ""),
 }
 
 _PROVIDER_URLS = {
@@ -606,6 +607,7 @@ _PROVIDER_URLS = {
     "openrouter": "https://openrouter.ai/api/v1",
     "deepseek": "https://api.deepseek.com/v1",
     "minimax": "https://api.minimax.io/v1",
+    "ollama": "http://localhost:11434/v1",
 }
 
 _PROVIDER_MODELS = {
@@ -616,6 +618,7 @@ _PROVIDER_MODELS = {
     ),
     "deepseek": ("deepseek-chat", ["deepseek-reasoner"]),
     "minimax": ("MiniMax-M2.5", ["MiniMax-M2.5-highspeed"]),
+    "ollama": ("qwen2.5:14b", ["qwen3.5:4b"]),
 }
 
 
@@ -651,7 +654,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         print("  2) openrouter   (requires OPENROUTER_API_KEY)")
         print("  3) deepseek     (requires DEEPSEEK_API_KEY)")
         print("  4) minimax      (requires MINIMAX_API_KEY)")
-        print("  5) acp          (local AI agent — no API key needed)")
+        print("  5) acp          (Copilot/Gemini CLI via ACP — no API key needed)")
+        print("  6) ollama       (local model server — no API key needed)")
         try:
             raw = input("Choice [1]: ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -668,12 +672,21 @@ def cmd_init(args: argparse.Namespace) -> int:
         'provider: "openai-compatible"', f'provider: "{provider}"'
     )
 
-    if provider == "acp":
-        # ACP doesn't need base_url or api_key
+    if provider in ("acp", "ollama"):
+        # ACP/Ollama don't require API key env in config.
+        # For ACP, base_url is also unused.
+        if provider == "acp":
+            content = content.replace(
+                'base_url: "https://api.openai.com/v1"', 'base_url: ""'
+            )
+        else:
+            base_url = _PROVIDER_URLS.get(provider, "http://localhost:11434/v1")
+            content = content.replace(
+                'base_url: "https://api.openai.com/v1"', f'base_url: "{base_url}"'
+            )
         content = content.replace(
-            'base_url: "https://api.openai.com/v1"', 'base_url: ""'
+            'api_key_env: "OPENAI_API_KEY"', 'api_key_env: ""'
         )
-        content = content.replace('api_key_env: "OPENAI_API_KEY"', 'api_key_env: ""')
     else:
         base_url = _PROVIDER_URLS.get(provider, "https://api.openai.com/v1")
         content = content.replace(
@@ -699,8 +712,13 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     if provider == "acp":
         print("\nNext steps:")
-        print("  1. Ensure your ACP agent is installed and on PATH")
-        print("  2. Edit config.arc.yaml to set llm.acp.agent if needed")
+        print("  1. Ensure acpx and your agent CLI are installed and on PATH")
+        print('  2. Set llm.acp.agent to "gh" (Copilot CLI) or "gemini" (Gemini CLI)')
+        print("  3. Run: researchclaw doctor")
+    elif provider == "ollama":
+        print("\nNext steps:")
+        print("  1. Start Ollama: ollama serve")
+        print("  2. Pull models: ollama pull qwen2.5:14b && ollama pull qwen3.5:4b")
         print("  3. Run: researchclaw doctor")
     else:
         env_var = api_key_env or "OPENAI_API_KEY"

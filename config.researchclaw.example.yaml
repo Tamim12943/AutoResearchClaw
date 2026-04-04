@@ -44,6 +44,18 @@ llm:
   fallback_models:
     - "gpt-4.1"
     - "gpt-4o-mini"
+  # --- ACP provider example (Copilot/Gemini CLI, no paid API keys) ---
+  # provider: "acp"
+  # base_url: ""
+  # api_key_env: ""
+  # primary_model: ""            # model is controlled by the ACP agent
+  # fallback_models: []
+  # acp:
+  #   agent: "gh"                # "gh" for Copilot CLI, or "gemini" for Gemini CLI
+  #   cwd: "."
+  #   acpx_command: ""           # optional path to acpx if not on PATH
+  #   session_name: "researchclaw"
+  #   timeout_sec: 1800
   # --- MiniMax provider example ---
   # provider: "minimax"
   # api_key_env: "MINIMAX_API_KEY"
@@ -52,12 +64,15 @@ llm:
   #   - "MiniMax-M2.5-highspeed"
   # --- Ollama (local) provider example ---
   # Run `ollama serve` and pull your model first, e.g.:
-  #   ollama pull llama3.2
+  #   ollama pull qwen2.5:14b
+  #   ollama pull qwen3.5:4b
   # Then set:
   # provider: "ollama"
-  # primary_model: "llama3.2"
-  # fallback_models: []
-  # No api_key or base_url needed — defaults to http://localhost:11434/v1
+  # primary_model: "qwen2.5:14b"
+  # fallback_models:
+  #   - "qwen3.5:4b"
+  # api_key_env: ""
+  # base_url defaults to http://localhost:11434/v1 (or set custom local endpoint)
 
 security:
   hitl_required_stages: [5, 9, 20]
@@ -91,6 +106,8 @@ experiment:
     auto_install_deps: true
     shm_size_mb: 2048
     keep_containers: false
+    # For AMD ROCm hosts, use the ROCm image variant and expose /dev/kfd + /dev/dri:
+    # image: "researchclaw/experiment:rocm"
   ssh_remote:
     host: ""                # SSH hostname or IP
     user: ""                # SSH username (default: current user)
