@@ -119,7 +119,7 @@ This is the only section you **must** configure. Everything else has sensible de
 
 ```yaml
 llm:
-  provider: "ollama"                         # Local-first default
+  provider: "ollama"                         # Local Ollama server (local-first default)
   base_url: "http://localhost:11434/v1"      # Ollama local endpoint
   api_key_env: ""                             # Not required for ollama/acp
   api_key: ""                                 # Keep empty for local workflow
@@ -131,6 +131,7 @@ llm:
 
 **Local Ollama setup**:
 ```bash
+# Install from https://ollama.com if needed
 ollama serve
 ollama pull qwen2.5:14b
 ollama pull qwen3.5:4b

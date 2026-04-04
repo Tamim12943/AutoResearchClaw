@@ -48,9 +48,11 @@ We're looking for testers from **all disciplines and backgrounds** — machine l
 | Python | 3.11+ | 3.11 or 3.12 |
 | Disk | 500 MB | 2 GB+ |
 | RAM | 8 GB | 16 GB+ |
-| GPU | Not required (sandbox mode) | NVIDIA CUDA or AMD ROCm (docker mode) |
+| GPU | Not required (sandbox mode) | NVIDIA GPU (CUDA 12.x) or AMD GPU (ROCm) for docker mode |
 | Network | Required (LLM API + literature search) | Stable connection |
 | LLM API Key | Optional | Not required for Ollama or ACP |
+
+> For AMD GPUs, install ROCm on your host first (so `rocm-smi`/`rocminfo` are available), then use Docker mode with a ROCm-compatible image and map `/dev/kfd` + `/dev/dri`.
 
 ### 🔑 About API Keys (Optional)
 
@@ -182,6 +184,7 @@ experiment:
 ### 🧩 Local Model Setup (Ollama)
 
 ```bash
+# Install from https://ollama.com if needed
 ollama serve
 ollama pull qwen2.5:14b
 ollama pull qwen3.5:4b
@@ -212,6 +215,9 @@ export S2_API_KEY="your-s2-key"
 source .venv/bin/activate
 researchclaw run --config config.yaml --auto-approve
 ```
+
+If you use the local Ollama workflow, ensure `ollama serve` is running first and your models are pulled:
+`ollama pull qwen2.5:14b && ollama pull qwen3.5:4b`.
 
 ### With a Specific Topic
 

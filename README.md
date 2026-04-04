@@ -137,6 +137,9 @@ researchclaw run --config config.arc.yaml --topic "Your research idea" --auto-ap
 
 > `researchclaw init` is local-first by default: it preconfigures **Ollama** (`qwen2.5:14b` with `qwen3.5:4b` fallback, no API key required).  
 > If needed, you can switch to **ACP** (`llm.provider: "acp"`) and set `llm.acp.agent` to `gh` (Copilot CLI) or `gemini` (Gemini CLI).
+>
+> Before running, make sure Ollama is installed, `ollama serve` is running, and these models are available:
+> `ollama pull qwen2.5:14b && ollama pull qwen3.5:4b`.
 
 Output → `artifacts/rc-YYYYMMDD-HHMMSS-<hash>/deliverables/` — compile-ready LaTeX, BibTeX, experiment code, charts.
 
@@ -625,7 +628,8 @@ experiment:
     network_policy: "setup_only"   # none | setup_only | pip_only | full
     gpu_enabled: true
     memory_limit_mb: 8192
-    # For AMD ROCm hosts, use a ROCm-compatible image and map /dev/kfd + /dev/dri.
+    # For AMD ROCm hosts, use a ROCm-compatible image and map /dev/kfd + /dev/dri
+    # (example run flags: --device=/dev/kfd --device=/dev/dri --group-add video).
     auto_install_deps: true        # Auto-detect imports → requirements.txt
   ssh_remote:
     host: ""                       # GPU server hostname

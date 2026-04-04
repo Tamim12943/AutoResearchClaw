@@ -282,7 +282,7 @@ def test_cmd_init_creates_config(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     _write_example_config(tmp_path / "config.researchclaw.example.yaml")
-    # Simulate non-TTY (stdin not a tty) → defaults to local ollama
+    # Simulate non-TTY (stdin not a tty) → defaults to local Ollama
     monkeypatch.setattr("sys.stdin", type("FakeStdin", (), {"isatty": lambda self: False})())
     args = argparse.Namespace(force=False)
     code = rc_cli.cmd_init(args)
