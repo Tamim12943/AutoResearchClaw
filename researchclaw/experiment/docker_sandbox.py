@@ -90,6 +90,11 @@ _IMPORT_TO_PIP = {
 }
 
 
+def _is_rocm_image(image: str) -> bool:
+    lowered = image.lower()
+    return "rocm" in lowered or "amd" in lowered
+
+
 class DockerSandbox:
     """Execute experiment code inside a Docker container.
 
@@ -467,11 +472,20 @@ class DockerSandbox:
 
         # GPU passthrough
         if cfg.gpu_enabled:
-            if cfg.gpu_device_ids:
-                device_spec = ",".join(str(d) for d in cfg.gpu_device_ids)
-                cmd.extend(["--gpus", f"device={device_spec}"])
+            if _is_rocm_image(cfg.image):
+                # ROCm device mapping
+                if Path("/dev/kfd").exists():
+                    cmd.extend(["--device", "/dev/kfd"])
+                if Path("/dev/dri").exists():
+                    cmd.extend(["--device", "/dev/dri"])
+                cmd.extend(["--group-add", "video"])
+                cmd.extend(["--group-add", "render"])
             else:
-                cmd.extend(["--gpus", "all"])
+                if cfg.gpu_device_ids:
+                    device_spec = ",".join(str(d) for d in cfg.gpu_device_ids)
+                    cmd.extend(["--gpus", f"device={device_spec}"])
+                else:
+                    cmd.extend(["--gpus", "all"])
 
         _SAFE_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
         if env_overrides:
