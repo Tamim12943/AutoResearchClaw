@@ -48,13 +48,18 @@ We're looking for testers from **all disciplines and backgrounds** — machine l
 | Python | 3.11+ | 3.11 or 3.12 |
 | Disk | 500 MB | 2 GB+ |
 | RAM | 8 GB | 16 GB+ |
-| GPU | Not required (sandbox mode) | NVIDIA GPU + CUDA 12.x (docker mode) |
+| GPU | Not required (sandbox mode) | NVIDIA GPU (CUDA 12.x) or AMD GPU (ROCm) for docker mode |
 | Network | Required (LLM API + literature search) | Stable connection |
-| LLM API Key | **Required** | OpenAI or Anthropic |
+| LLM API Key | Optional | Not required for Ollama or ACP |
 
-### 🔑 About API Keys
+> For AMD GPUs, install ROCm on your host first (so `rocm-smi`/`rocminfo` are available), then use Docker mode with a ROCm-compatible image and map `/dev/kfd` + `/dev/dri`.
 
-The pipeline calls a large language model (LLM) at every stage — writing, coding, reviewing, and more. You'll need an API key from **OpenAI** or **Anthropic**.
+### 🔑 About API Keys (Optional)
+
+The pipeline calls a large language model (LLM) at every stage — writing, coding, reviewing, and more.  
+For local-first workflows, use **Ollama** (no API key). For intensive tasks, use **ACP** with Copilot CLI/Gemini CLI (also no API key in config).
+
+Cloud providers like OpenAI/Anthropic remain optional.
 
 > **We strongly recommend using the most capable models available for the best results:**
 >
@@ -148,26 +153,24 @@ research:
   domains:
     - "machine-learning"     # Options: nlp, cv, rl, graph-learning, etc.
 
-# === LLM — use the strongest model you have access to! ===
+# === LLM — local-first recommended ===
 #
-# Option 1: OpenAI (GPT-5.4 recommended)
+# Option 1: Ollama local models (recommended)
 llm:
-  provider: "openai-compatible"
-  base_url: "https://api.openai.com/v1"
-  api_key_env: "OPENAI_API_KEY"
-  primary_model: "gpt-5.4"              # Best available
+  provider: "ollama"
+  base_url: "http://localhost:11434/v1"
+  api_key_env: ""
+  primary_model: "qwen2.5:14b"
   fallback_models:
-    - "gpt-5.1"
-    - "gpt-4.1"
+    - "qwen3.5:4b"
 
-# Option 2: Anthropic Claude (Claude Opus 4.6 recommended)
+# Option 2: ACP fallback for heavier tasks (Copilot CLI / Gemini CLI)
 # llm:
-#   provider: "openai-compatible"
-#   base_url: "https://api.anthropic.com/v1"
-#   api_key_env: "ANTHROPIC_API_KEY"
-#   primary_model: "claude-opus-4-6"
-#   fallback_models:
-#     - "claude-sonnet-4-6"
+#   provider: "acp"
+#   api_key_env: ""
+#   acp:
+#     agent: "gh"      # or "gemini"
+#     cwd: "."
 
 # === Experiment ===
 experiment:
@@ -178,7 +181,16 @@ experiment:
   metric_direction: "minimize"   # or "maximize"
 ```
 
-### 🔐 Set Your API Key
+### 🧩 Local Model Setup (Ollama)
+
+```bash
+# Install from https://ollama.com if needed
+ollama serve
+ollama pull qwen2.5:14b
+ollama pull qwen3.5:4b
+```
+
+### 🔐 Set API Key (Cloud providers only)
 
 ```bash
 # OpenAI users:
@@ -201,10 +213,11 @@ export S2_API_KEY="your-s2-key"
 
 ```bash
 source .venv/bin/activate
-export OPENAI_API_KEY="sk-xxxx"       # or ANTHROPIC_API_KEY
-
 researchclaw run --config config.yaml --auto-approve
 ```
+
+If you use the local Ollama workflow, ensure `ollama serve` is running first and your models are pulled:
+`ollama pull qwen2.5:14b && ollama pull qwen3.5:4b`.
 
 ### With a Specific Topic
 

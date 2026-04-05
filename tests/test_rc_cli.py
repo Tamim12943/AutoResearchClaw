@@ -282,7 +282,7 @@ def test_cmd_init_creates_config(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     _write_example_config(tmp_path / "config.researchclaw.example.yaml")
-    # Simulate non-TTY (stdin not a tty) → defaults to openai
+    # Simulate non-TTY (stdin not a tty) → defaults to local Ollama
     monkeypatch.setattr("sys.stdin", type("FakeStdin", (), {"isatty": lambda self: False})())
     args = argparse.Namespace(force=False)
     code = rc_cli.cmd_init(args)
@@ -290,7 +290,10 @@ def test_cmd_init_creates_config(
     created = tmp_path / "config.arc.yaml"
     assert created.exists()
     content = created.read_text(encoding="utf-8")
-    assert 'provider: "openai"' in content
+    assert 'provider: "ollama"' in content
+    assert 'base_url: "http://localhost:11434/v1"' in content
+    assert 'api_key_env: ""' in content
+    assert 'primary_model: "qwen2.5:14b"' in content
     assert "Created config.arc.yaml" in capsys.readouterr().out
 
 

@@ -71,9 +71,9 @@ OpenClaw will modify `config.yaml` accordingly before running the pipeline.
 | Requirement | Details |
 |-------------|---------|
 | **Python** | 3.11 or newer |
-| **LLM API** | Any OpenAI-compatible endpoint (OpenAI, Azure, local proxy, etc.) |
+| **LLM API** | Optional when using Ollama/ACP; otherwise any OpenAI-compatible endpoint |
 | **Disk space** | ~100 MB for the repo + artifacts per run |
-| **Network** | Required for LLM API calls and literature search (Semantic Scholar, arXiv) |
+| **Network** | Required for literature search (OpenAlex, Semantic Scholar, arXiv); LLM API network is optional for local Ollama |
 
 ### Installation
 
@@ -119,17 +119,35 @@ This is the only section you **must** configure. Everything else has sensible de
 
 ```yaml
 llm:
-  base_url: "https://api.openai.com/v1"     # Your LLM API endpoint
-  api_key_env: "OPENAI_API_KEY"              # Environment variable name...
-  api_key: ""                                # ...or paste the key directly here
-  primary_model: "gpt-4o"                    # Model to use (gpt-4o, gpt-5.2, etc.)
-  fallback_models:                           # Tried in order if primary fails
-    - "gpt-4.1"
-    - "gpt-4o-mini"
+  provider: "ollama"                         # Local Ollama server (local-first default)
+  base_url: "http://localhost:11434/v1"      # Ollama local endpoint
+  api_key_env: ""                             # Not required for ollama/acp
+  api_key: ""                                 # Keep empty for local workflow
+  primary_model: "qwen2.5:14b"                # Primary local model
+  fallback_models:                            # Tried in order if primary fails
+    - "qwen3.5:4b"
   s2_api_key: ""                             # Optional: Semantic Scholar API key for higher rate limits
 ```
 
-**Using an environment variable** (recommended for security):
+**Local Ollama setup**:
+```bash
+# Install from https://ollama.com if needed
+ollama serve
+ollama pull qwen2.5:14b
+ollama pull qwen3.5:4b
+```
+
+**ACP fallback (Copilot/Gemini CLI)**:
+```yaml
+llm:
+  provider: "acp"
+  api_key_env: ""
+  acp:
+    agent: "gh"      # or "gemini"
+    cwd: "."
+```
+
+**Using an environment variable** (for cloud providers):
 ```bash
 export OPENAI_API_KEY="sk-..."
 ```
@@ -294,7 +312,7 @@ The pipeline runs in 8 phases. Each stage reads artifacts from previous stages a
 | # | Stage | What Happens | Produces |
 |---|-------|-------------|----------|
 | 3 | SEARCH_STRATEGY | Plans search queries and data sources | `search_plan.yaml`, `sources.json` |
-| 4 | LITERATURE_COLLECT | Queries **real APIs** (arXiv-first, then Semantic Scholar) with expanded queries for broad coverage | `candidates.jsonl` |
+| 4 | LITERATURE_COLLECT | Queries **real APIs** (OpenAlex-first, then Semantic Scholar, then arXiv) with expanded queries for broad coverage | `candidates.jsonl` |
 | 5 | LITERATURE_SCREEN | **[Gate]** Filters by relevance and quality | `shortlist.jsonl` |
 | 6 | KNOWLEDGE_EXTRACT | Extracts structured knowledge cards from each paper | `cards/` |
 
