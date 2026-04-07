@@ -468,6 +468,8 @@ class DockerSandbox:
         # GPU passthrough
         if cfg.gpu_enabled:
             image_ref = cfg.image.lower()
+            # Match "rocm" as a standalone token/tag (e.g. ":rocm", "rocm-base")
+            # but avoid accidental partial matches inside unrelated words.
             is_rocm_image = bool(
                 re.search(r"(^|[^a-z0-9])rocm([^a-z0-9]|$)", image_ref)
             )

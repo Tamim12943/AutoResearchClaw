@@ -53,7 +53,15 @@ if errorlevel 1 (
 
 echo [5/7] Pulling local models (Gemma)...
 ollama pull gemma3:12b
+if errorlevel 1 (
+  echo Failed to pull gemma3:12b
+  goto :fail
+)
 ollama pull gemma3:4b
+if errorlevel 1 (
+  echo Failed to pull gemma3:4b
+  goto :fail
+)
 
 echo [6/7] Ensuring Docker images (optional but recommended)...
 where docker >nul 2>&1

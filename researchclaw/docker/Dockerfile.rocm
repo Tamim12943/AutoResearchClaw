@@ -1,5 +1,5 @@
 # ResearchClaw experiment sandbox (ROCm/AMD GPU variant).
-# Build: docker build -f Dockerfile.rocm -t researchclaw/experiment:rocm researchclaw/docker/
+# Build: docker build -f researchclaw/docker/Dockerfile.rocm -t researchclaw/experiment:rocm researchclaw/docker/
 FROM rocm/pytorch:latest
 
 ENV DEBIAN_FRONTEND=noninteractive
