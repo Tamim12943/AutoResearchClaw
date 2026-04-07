@@ -467,11 +467,26 @@ class DockerSandbox:
 
         # GPU passthrough
         if cfg.gpu_enabled:
-            if cfg.gpu_device_ids:
-                device_spec = ",".join(str(d) for d in cfg.gpu_device_ids)
-                cmd.extend(["--gpus", f"device={device_spec}"])
+            is_rocm_image = "rocm" in cfg.image.lower()
+            if is_rocm_image:
+                # ROCm device mapping (AMD GPU hosts)
+                cmd.extend([
+                    "--device", "/dev/kfd",
+                    "--device", "/dev/dri",
+                    "--group-add", "video",
+                ])
+                if cfg.gpu_device_ids:
+                    device_spec = ",".join(str(d) for d in cfg.gpu_device_ids)
+                    cmd.extend(["-e", f"HIP_VISIBLE_DEVICES={device_spec}"])
+                hsa_override = os.environ.get("HSA_OVERRIDE_GFX_VERSION", "").strip()
+                if hsa_override:
+                    cmd.extend(["-e", f"HSA_OVERRIDE_GFX_VERSION={hsa_override}"])
             else:
-                cmd.extend(["--gpus", "all"])
+                if cfg.gpu_device_ids:
+                    device_spec = ",".join(str(d) for d in cfg.gpu_device_ids)
+                    cmd.extend(["--gpus", f"device={device_spec}"])
+                else:
+                    cmd.extend(["--gpus", "all"])
 
         _SAFE_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
         if env_overrides:
