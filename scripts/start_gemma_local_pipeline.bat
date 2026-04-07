@@ -35,6 +35,7 @@ if not exist "config.arc.yaml" (
 )
 
 echo [3/7] Setting AMD compatibility env...
+REM RDNA2 (RX 6700 XT) commonly needs this ROCm override on some hosts.
 set "HSA_OVERRIDE_GFX_VERSION=10.3.0"
 
 echo [4/7] Ensuring Ollama is available...

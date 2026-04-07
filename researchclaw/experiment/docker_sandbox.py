@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 _CONTAINER_COUNTER = 0
 _counter_lock = threading.Lock()
+_ROCM_IMAGE_RE = re.compile(r"(^|[^a-z0-9])rocm([^a-z0-9]|$)")
 
 
 def _next_container_name() -> str:
@@ -470,11 +471,11 @@ class DockerSandbox:
             image_ref = cfg.image.lower()
             # Match "rocm" as a standalone token/tag (e.g. ":rocm", "rocm-base")
             # but avoid accidental partial matches inside unrelated words.
-            is_rocm_image = bool(
-                re.search(r"(^|[^a-z0-9])rocm([^a-z0-9]|$)", image_ref)
-            )
+            is_rocm_image = bool(_ROCM_IMAGE_RE.search(image_ref))
             if is_rocm_image:
                 # ROCm device mapping (AMD GPU hosts)
+                # /dev/kfd and /dev/dri expose kernel/HIP and DRM interfaces,
+                # and "video" group membership is commonly needed for access.
                 cmd.extend([
                     "--device", "/dev/kfd",
                     "--device", "/dev/dri",
