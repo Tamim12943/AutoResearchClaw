@@ -467,7 +467,10 @@ class DockerSandbox:
 
         # GPU passthrough
         if cfg.gpu_enabled:
-            is_rocm_image = "rocm" in cfg.image.lower()
+            image_ref = cfg.image.lower()
+            is_rocm_image = bool(
+                re.search(r"(^|[^a-z0-9])rocm([^a-z0-9]|$)", image_ref)
+            )
             if is_rocm_image:
                 # ROCm device mapping (AMD GPU hosts)
                 cmd.extend([
