@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 _CONTAINER_COUNTER = 0
 _counter_lock = threading.Lock()
+_ROCM_IMAGE_RE = re.compile(r"(^|[^a-z0-9])rocm([^a-z0-9]|$)")
 
 
 def _next_container_name() -> str:
@@ -467,11 +468,31 @@ class DockerSandbox:
 
         # GPU passthrough
         if cfg.gpu_enabled:
-            if cfg.gpu_device_ids:
-                device_spec = ",".join(str(d) for d in cfg.gpu_device_ids)
-                cmd.extend(["--gpus", f"device={device_spec}"])
+            image_ref = cfg.image.lower()
+            # Match "rocm" as a standalone token/tag (e.g. ":rocm", "rocm-base")
+            # but avoid accidental partial matches inside unrelated words.
+            is_rocm_image = bool(_ROCM_IMAGE_RE.search(image_ref))
+            if is_rocm_image:
+                # ROCm device mapping (AMD GPU hosts)
+                # /dev/kfd and /dev/dri expose kernel/HIP and DRM interfaces,
+                # and "video" group membership is commonly needed for access.
+                cmd.extend([
+                    "--device", "/dev/kfd",
+                    "--device", "/dev/dri",
+                    "--group-add", "video",
+                ])
+                if cfg.gpu_device_ids:
+                    device_spec = ",".join(str(d) for d in cfg.gpu_device_ids)
+                    cmd.extend(["-e", f"HIP_VISIBLE_DEVICES={device_spec}"])
+                hsa_override = os.environ.get("HSA_OVERRIDE_GFX_VERSION", "").strip()
+                if hsa_override:
+                    cmd.extend(["-e", f"HSA_OVERRIDE_GFX_VERSION={hsa_override}"])
             else:
-                cmd.extend(["--gpus", "all"])
+                if cfg.gpu_device_ids:
+                    device_spec = ",".join(str(d) for d in cfg.gpu_device_ids)
+                    cmd.extend(["--gpus", f"device={device_spec}"])
+                else:
+                    cmd.extend(["--gpus", "all"])
 
         _SAFE_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
         if env_overrides:

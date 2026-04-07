@@ -122,6 +122,28 @@ def test_build_run_command_specific_gpus(tmp_path: Path):
     assert "0,2" in cmd[gpu_idx + 1]
 
 
+def test_build_run_command_rocm_image_maps_devices(tmp_path: Path):
+    cfg = DockerSandboxConfig(
+        image="researchclaw/experiment:rocm",
+        gpu_device_ids=(0, 1),
+        network_policy="none",
+    )
+    sandbox = DockerSandbox(cfg, tmp_path / "work")
+    cmd = sandbox._build_run_command(
+        tmp_path / "staging",
+        entry_point="main.py",
+        container_name="rc-test-rocm",
+    )
+    assert "--gpus" not in cmd
+    assert "--device" in cmd
+    assert "/dev/kfd" in cmd
+    assert "/dev/dri" in cmd
+    assert "--group-add" in cmd
+    assert "video" in cmd
+    env_values = [cmd[i + 1] for i, token in enumerate(cmd) if token == "-e"]
+    assert "HIP_VISIBLE_DEVICES=0,1" in env_values
+
+
 def test_build_run_command_forwards_entry_args_and_env(tmp_path: Path):
     cfg = DockerSandboxConfig(network_policy="none")
     sandbox = DockerSandbox(cfg, tmp_path / "work")

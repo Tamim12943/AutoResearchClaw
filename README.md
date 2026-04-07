@@ -141,6 +141,13 @@ researchclaw run --config config.arc.yaml --topic "Your research idea" --auto-ap
 > Before running, make sure Ollama is installed, `ollama serve` is running, and these models are available:
 > `ollama pull qwen2.5:14b && ollama pull qwen3.5:4b`.
 
+> For local Gemma on AMD (RX 6700 XT), you can use the included starter files:
+> - Config template: `config.gemma-local.example.yaml`
+> - Windows startup script: `scripts/start_gemma_local_pipeline.bat`
+> - ROCm Docker image: `researchclaw/docker/Dockerfile.rocm`  
+>   Build with:
+>   `docker build -f researchclaw/docker/Dockerfile.rocm -t researchclaw/experiment:rocm researchclaw/docker`
+
 Output → `artifacts/rc-YYYYMMDD-HHMMSS-<hash>/deliverables/` — compile-ready LaTeX, BibTeX, experiment code, charts.
 
 <details>
